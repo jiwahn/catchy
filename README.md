@@ -71,6 +71,11 @@ Try the demo with:
 make demo-failing-hook
 ```
 
+Additional examples:
+
+* `examples/failing-hook`: minimal synthetic failing hook.
+* `examples/cdi-like-hook`: simulated CDI/device hook-style failure. This is not CDI integration.
+
 This project is intentionally focused on OCI runtime hook debugging. It is not a general-purpose container debugger.
 
 ## Directory structure

@@ -1,0 +1,77 @@
+{
+	"ociVersion": "1.2.0",
+	"process": {
+		"terminal": false,
+		"user": {
+			"uid": 0,
+			"gid": 0
+		},
+		"args": [
+			"/bin/true"
+		],
+		"env": [
+			"PATH=/bin:/usr/bin:/sbin:/usr/sbin"
+		],
+		"cwd": "/",
+		"noNewPrivileges": true
+	},
+	"root": {
+		"path": "__ROOTFS__",
+		"readonly": true
+	},
+	"hooks": {
+		"prestart": [
+			{
+				"path": "__HOOK_PATH__",
+				"args": [
+					"__HOOK_PATH__"
+				],
+				"env": [
+					"CATCHY_FAKE_CDI=1",
+					"CATCHY_FAKE_CDI_STATE_OUT=__STATE_OUT__"
+				],
+				"timeout": 5
+			}
+		]
+	},
+	"mounts": [
+		{
+			"destination": "/proc",
+			"type": "proc",
+			"source": "proc"
+		}
+	],
+	"linux": {
+		"namespaces": [
+			{
+				"type": "pid"
+			},
+			{
+				"type": "ipc"
+			},
+			{
+				"type": "uts"
+			},
+			{
+				"type": "mount"
+			},
+			{
+				"type": "user"
+			}
+		],
+		"uidMappings": [
+			{
+				"containerID": 0,
+				"hostID": "__UID__",
+				"size": 1
+			}
+		],
+		"gidMappings": [
+			{
+				"containerID": 0,
+				"hostID": "__GID__",
+				"size": 1
+			}
+		]
+	}
+}
