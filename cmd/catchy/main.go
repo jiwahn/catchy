@@ -1,0 +1,212 @@
+package main
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"catchy/internal/hook"
+	"catchy/internal/spec"
+)
+
+// version of catchy (update when releasing)
+const version = "0.0.1"
+
+// printUsage prints a basic usage message.
+func printUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: catchy <command> [options]
+
+Commands:
+    inspect   Inspect an OCI bundle and list its hooks
+    wrap      Rewrite hooks in a bundle to wrap them with a trace wrapper
+    restore   Restore config.json from config.json.catchy.bak
+    run       Wrap hooks and run the container via an OCI runtime
+    report    Summarise collected hook trace logs
+
+Use "catchy <command> -h" for more information about a command.
+`)
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		printUsage()
+		os.Exit(1)
+	}
+	cmd := os.Args[1]
+	switch cmd {
+	case "inspect":
+		inspectCmd(os.Args[2:])
+	case "wrap":
+		wrapCmd(os.Args[2:])
+	case "restore":
+		restoreCmd(os.Args[2:])
+	case "run":
+		runCmd(os.Args[2:])
+	case "report":
+		reportCmd(os.Args[2:])
+	case "version":
+		fmt.Println(version)
+	case "help", "-h", "--help":
+		printUsage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+// inspectCmd parses flags and calls the inspect subcommand.
+func inspectCmd(args []string) {
+	fs := flag.NewFlagSet("inspect", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy inspect <bundle>\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	bundle := fs.Arg(0)
+	// TODO: call internal/spec to load and report hooks
+	fmt.Printf("inspect called on bundle %s\n", bundle)
+
+	cfgPath := filepath.Join(bundle, "config.json")
+
+	b, err := spec.LoadBundle(cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load bundle: %v\n", err)
+		os.Exit(1)
+	}
+
+	if b.Hooks == nil {
+		fmt.Println("no hooks found")
+		return
+	}
+
+	printHooks("prestart", b.Hooks.Prestart)
+	printHooks("createRuntime", b.Hooks.CreateRuntime)
+	printHooks("createContainer", b.Hooks.CreateContainer)
+	printHooks("startContainer", b.Hooks.StartContainer)
+	printHooks("poststart", b.Hooks.Poststart)
+	printHooks("poststop", b.Hooks.Poststop)
+
+}
+
+// wrapCmd rewrites hooks in the bundle.
+func wrapCmd(args []string) {
+	fs := flag.NewFlagSet("wrap", flag.ExitOnError)
+	wrapperPath := fs.String("wrapper", "/usr/local/bin/catchy-wrapper", "path to the catchy wrapper executable")
+	force := fs.Bool("force", false, "overwrite an existing config.json.catchy.bak backup")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy wrap [--wrapper /path/to/catchy-wrapper] [--force] <bundle>\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	bundle := fs.Arg(0)
+	if err := hook.WrapBundleWithOptions(bundle, *wrapperPath, hook.WrapOptions{Force: *force}); err != nil {
+		if errors.Is(err, hook.ErrNoHooks) {
+			fmt.Println("no hooks found")
+			return
+		}
+		fmt.Fprintf(os.Stderr, "failed to wrap bundle: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("wrapped hooks in bundle %s\n", bundle)
+}
+
+// restoreCmd restores config.json from config.json.catchy.bak.
+func restoreCmd(args []string) {
+	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy restore <bundle>\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	bundle := fs.Arg(0)
+	if err := hook.RestoreBundle(bundle); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to restore bundle: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("restored bundle %s\n", bundle)
+}
+
+// runCmd wraps hooks and runs the runtime.
+func runCmd(args []string) {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	runtime := fs.String("runtime", "runc", "OCI runtime to use (runc, crun, etc.)")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy run [--runtime runc] <bundle>\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	bundle := fs.Arg(0)
+	// TODO: call internal/hook.wrap + exec runtime
+	fmt.Printf("run called on bundle %s with runtime %s\n", bundle, *runtime)
+}
+
+// reportCmd summarises collected hook logs.
+func reportCmd(args []string) {
+	fs := flag.NewFlagSet("report", flag.ExitOnError)
+	format := fs.String("format", "text", "output format: text, json, yaml")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy report [--format text] <trace-dir>\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	traceDir := fs.Arg(0)
+	// TODO: call internal/report to summarise logs
+	fmt.Printf("report called on dir %s with format %s\n", traceDir, *format)
+}
+
+func printHooks(name string, hooks []spec.Hook) {
+	if len(hooks) == 0 {
+		return
+	}
+
+	fmt.Printf("%s:\n", name)
+	for i, h := range hooks {
+		fmt.Printf("  [%d]\n", i)
+		fmt.Printf("    path: %s\n", h.Path)
+
+		if len(h.Args) > 0 {
+			fmt.Printf("    args: %v\n", h.Args)
+		}
+
+		if len(h.Env) > 0 {
+			fmt.Printf("    env: %v\n", h.Env)
+		}
+
+		if h.Timeout > 0 {
+			fmt.Printf("    timeout: %d\n", h.Timeout)
+		}
+	}
+}
