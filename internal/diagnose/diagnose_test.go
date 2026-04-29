@@ -73,7 +73,7 @@ func TestDiagnoseNonZeroExit(t *testing.T) {
 		"redacted: true",
 		"likely cause: hook exited with non-zero status",
 		"hints:",
-		"required environment variable appears to be missing. Check hook env configuration in config.json or the invoking runtime.",
+		"  * required environment variable appears to be missing. Check hook env configuration in config.json or the invoking runtime.",
 		"stderr: demo prestart hook: missing required GPU_DEVICE_ID\\nhint: fix config",
 		"stdout: partial stdout",
 		"trace: /tmp/trace.json",
@@ -215,10 +215,18 @@ func TestDiagnoseHints(t *testing.T) {
 			want: "wrong architecture or may be missing a valid shebang",
 		},
 		{
-			name: "sigkill",
+			name: "sigkill signal",
 			entry: report.Entry{
 				HookStage: "prestart",
 				Signal:    "SIGKILL",
+			},
+			want: "hook was killed by SIGKILL",
+		},
+		{
+			name: "sigkill text",
+			entry: report.Entry{
+				HookStage: "prestart",
+				Error:     "hook was killed by signal 9",
 			},
 			want: "hook was killed by SIGKILL",
 		},
@@ -231,11 +239,20 @@ func TestDiagnoseHints(t *testing.T) {
 			want: "hook exceeded its configured timeout",
 		},
 		{
-			name: "missing env",
+			name: "missing env is not set",
 			entry: report.Entry{
 				HookStage: "prestart",
 				ExitCode:  1,
-				Stderr:    "TOKEN is not set",
+				Stderr:    "GPU_DEVICE_ID is not set",
+			},
+			want: "required environment variable appears to be missing",
+		},
+		{
+			name: "missing required env",
+			entry: report.Entry{
+				HookStage: "prestart",
+				ExitCode:  1,
+				Stderr:    "missing required NVIDIA_VISIBLE_DEVICES",
 			},
 			want: "required environment variable appears to be missing",
 		},
@@ -266,6 +283,56 @@ func TestDiagnoseHints(t *testing.T) {
 			assertHint(t, result.Failures[0].Hints, tt.want)
 			if text := result.FormatText(); !strings.Contains(text, tt.want) {
 				t.Fatalf("text output missing hint %q:\n%s", tt.want, text)
+			}
+		})
+	}
+}
+
+func TestDiagnoseHintFalsePositives(t *testing.T) {
+	tests := []struct {
+		name    string
+		entry   report.Entry
+		notWant string
+	}{
+		{
+			name: "generic killed text",
+			entry: report.Entry{
+				HookStage: "prestart",
+				ExitCode:  1,
+				Stderr:    "process was not killed",
+			},
+			notWant: "hook was killed by SIGKILL",
+		},
+		{
+			name: "set namespace",
+			entry: report.Entry{
+				HookStage: "prestart",
+				ExitCode:  1,
+				Stderr:    "set namespace failed",
+			},
+			notWant: "required environment variable appears to be missing",
+		},
+		{
+			name: "set mount propagation",
+			entry: report.Entry{
+				HookStage: "prestart",
+				ExitCode:  1,
+				Stderr:    "set mount propagation failed",
+			},
+			notWant: "required environment variable appears to be missing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FromReport(&report.Report{Entries: []report.Entry{tt.entry}})
+			if result.FailedTraces != 1 {
+				t.Fatalf("expected one failure, got %#v", result)
+			}
+			for _, hint := range result.Failures[0].Hints {
+				if strings.Contains(hint, tt.notWant) {
+					t.Fatalf("unexpected hint %q in %#v", tt.notWant, result.Failures[0].Hints)
+				}
 			}
 		})
 	}

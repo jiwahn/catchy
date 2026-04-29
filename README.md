@@ -62,6 +62,8 @@ exit: 42
 duration: 3ms
 redacted: true
 likely cause: hook exited with non-zero status
+hints:
+  * required environment variable appears to be missing. Check hook env configuration in config.json or the invoking runtime.
 stderr: demo prestart hook: missing required GPU_DEVICE_ID
 ```
 
@@ -179,8 +181,7 @@ catchy run --redact-key session_id --runtime runc bundle
 
 ## Roadmap
 
-* Add a failure-focused `diagnose` command.
-* Add a CDI-like hook failure demo.
+* Improve diagnose rules with runtime-specific and CDI-specific failure hints.
 * Improve runtime compatibility testing.
 * Consider helpers for locating runtime bundles created by containerd.
 

@@ -103,7 +103,7 @@ func (r *Result) FormatText() string {
 		if len(failure.Hints) > 0 {
 			b.WriteString("hints:\n")
 			for _, hint := range failure.Hints {
-				fmt.Fprintf(&b, "- %s\n", hint)
+				fmt.Fprintf(&b, "  * %s\n", hint)
 			}
 		}
 		if failure.Error != "" {
@@ -151,35 +151,35 @@ func likelyCause(entry report.Entry) string {
 }
 
 func hints(entry report.Entry) []string {
-	text := strings.ToLower(strings.Join([]string{
+	text := strings.Join([]string{
 		entry.Error,
 		entry.Stderr,
 		entry.Stdout,
 		entry.Path,
 		entry.Signal,
-	}, "\n"))
+	}, "\n")
+	lowerText := strings.ToLower(text)
 	var out []string
 
-	if strings.Contains(text, "permission denied") {
+	if strings.Contains(lowerText, "permission denied") {
 		out = append(out, "hook path or one of its referenced files may not be executable or accessible. Check file permissions and ownership.")
 	}
-	if strings.Contains(text, "no such file or directory") {
+	if strings.Contains(lowerText, "no such file or directory") {
 		out = append(out, "hook executable or interpreter may be missing on the host. OCI hook paths are resolved on the host side, not inside the container rootfs.")
 	}
-	if strings.Contains(text, "executable file not found") {
+	if strings.Contains(lowerText, "executable file not found") {
 		out = append(out, "hook executable could not be resolved. Use an absolute hook path and verify it exists on the host.")
 	}
-	if strings.Contains(text, "exec format error") {
+	if strings.Contains(lowerText, "exec format error") {
 		out = append(out, "hook executable may be built for the wrong architecture or may be missing a valid shebang.")
 	}
-	if strings.Contains(text, "illegal instruction") || strings.Contains(text, "sigill") {
+	if strings.Contains(lowerText, "illegal instruction") || strings.Contains(lowerText, "sigill") {
 		out = append(out, "hook process hit an illegal CPU instruction. Check binary architecture, CPU feature assumptions, or emulation/runtime mismatch.")
 	}
-	if strings.Contains(text, "sigkill") || strings.Contains(text, "signal: killed") || strings.Contains(text, "signal killed") ||
-		strings.Contains(text, "killed") || strings.EqualFold(entry.Signal, "killed") || strings.EqualFold(entry.Signal, "sigkill") {
+	if isSIGKILL(entry, lowerText) {
 		out = append(out, "hook was killed by SIGKILL. Check timeout, OOM killer, or external process termination.")
 	}
-	if entry.TimedOut || strings.Contains(text, "timeout") || strings.Contains(text, "context deadline exceeded") {
+	if entry.TimedOut || strings.Contains(lowerText, "timeout") || strings.Contains(lowerText, "context deadline exceeded") {
 		out = append(out, "hook exceeded its configured timeout or did not finish in time. Increase timeout or inspect why the hook blocks.")
 	}
 	if looksLikeMissingEnv(text) {
@@ -195,12 +195,23 @@ func hints(entry report.Entry) []string {
 	return dedupe(out)
 }
 
+func isSIGKILL(entry report.Entry, lowerText string) bool {
+	return strings.EqualFold(entry.Signal, "SIGKILL") ||
+		strings.EqualFold(entry.Signal, "killed") ||
+		strings.Contains(lowerText, "sigkill") ||
+		strings.Contains(lowerText, "signal: killed") ||
+		strings.Contains(lowerText, "signal killed") ||
+		strings.Contains(lowerText, "killed by signal")
+}
+
 func looksLikeMissingEnv(text string) bool {
 	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`missing required [a-z_][a-z0-9_]*`),
-		regexp.MustCompile(`missing [a-z_][a-z0-9_]*`),
-		regexp.MustCompile(`[a-z_][a-z0-9_]* is not set`),
-		regexp.MustCompile(`set [a-z_][a-z0-9_]*`),
+		regexp.MustCompile(`\bmissing required [A-Z_][A-Z0-9_]*\b`),
+		regexp.MustCompile(`\bmissing [A-Z_][A-Z0-9_]*\b`),
+		regexp.MustCompile(`\b[A-Z_][A-Z0-9_]* is not set\b`),
+		regexp.MustCompile(`\bplease set [A-Z_][A-Z0-9_]*\b`),
+		regexp.MustCompile(`\bset [A-Z_][A-Z0-9_]* environment variable\b`),
+		regexp.MustCompile(`\bset env [A-Z_][A-Z0-9_]*\b`),
 	}
 	for _, pattern := range patterns {
 		if pattern.MatchString(text) {
