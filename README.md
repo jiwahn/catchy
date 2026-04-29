@@ -25,6 +25,43 @@ The containerd issue **"Make it POSSIBLE to debug cdi hooks"** complains that th
 * **Report** hook execution traces in human‑readable or machine‑readable formats (text, JSON, YAML).  
 * Designed as an external CLI; no need to modify containerd or the runtime.
 
+## Before / After
+
+OCI hook failures are often opaque. A normal runtime run may only say that a hook failed, without preserving enough detail to quickly identify which command ran, what it printed, or what state JSON it received.
+
+With the failing-hook demo, a direct runtime run looks like this:
+
+```
+$ runc run -b examples/failing-hook/.work/bundle catchy-demo-direct
+error running prestart hook #0: exit status 42
+```
+
+The hook printed a useful diagnostic, but depending on the runtime and caller that output may be missing, truncated, or buried in a larger error.
+
+Running the same bundle through `catchy` still fails the container, but it leaves a trace:
+
+```
+$ catchy run --runtime runc --trace-dir examples/failing-hook/.work/traces examples/failing-hook/.work/bundle
+error running prestart hook #0: exit status 42
+
+$ catchy report examples/failing-hook/.work/traces
+hook traces: 1
+
+prestart[0] failed
+  path: /bin/sh
+  exit: 42
+  duration: 3ms
+  stderr: demo prestart hook: missing required GPU_DEVICE_ID\nhint: set GPU_DEVICE_ID or fix the CDI/device hook config
+```
+
+Try the demo with:
+
+```
+make demo-failing-hook
+```
+
+This project is intentionally focused on OCI runtime hook debugging. It is not a general-purpose container debugger.
+
 ## Directory structure
 
 ```

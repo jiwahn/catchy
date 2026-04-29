@@ -186,10 +186,11 @@ func runCmd(args []string) {
 	if err == nil {
 		wrapped = true
 	}
+	restored := false
 	if wrapped && !*keepWrapped {
 		defer func() {
-			if err := hook.RestoreBundle(bundle); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to restore bundle: %v\n", err)
+			if !restored {
+				restoreAfterRun(bundle)
 			}
 		}()
 	}
@@ -200,6 +201,10 @@ func runCmd(args []string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		if wrapped && !*keepWrapped {
+			restoreAfterRun(bundle)
+			restored = true
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
@@ -271,4 +276,10 @@ func splitArgs(raw string) []string {
 		return nil
 	}
 	return strings.Fields(raw)
+}
+
+func restoreAfterRun(bundle string) {
+	if err := hook.RestoreBundle(bundle); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to restore bundle: %v\n", err)
+	}
 }

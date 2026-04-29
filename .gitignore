@@ -1,0 +1,11 @@
+.catchy/
+traces/
+config.json.catchy.bak
+*.trace.json
+trace-*.json
+
+# Demo/runtime output.
+examples/**/.work/
+examples/**/traces/
+examples/**/run/
+examples/**/config.json.catchy.bak
