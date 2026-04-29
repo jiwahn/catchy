@@ -53,6 +53,16 @@ prestart[0] failed
   exit: 42
   duration: 3ms
   stderr: demo prestart hook: missing required GPU_DEVICE_ID\nhint: set GPU_DEVICE_ID or fix the CDI/device hook config
+
+$ catchy diagnose examples/failing-hook/.work/traces
+hook failures: 1 of 1 traces
+prestart[0] failed
+path: /bin/sh
+exit: 42
+duration: 3ms
+redacted: true
+likely cause: hook exited with non-zero status
+stderr: demo prestart hook: missing required GPU_DEVICE_ID
 ```
 
 Try the demo with:
@@ -117,6 +127,7 @@ CATCHY_E2E_RUNTIME=1 CATCHY_E2E_RUNTIMES=runc go test ./test/e2e -v
 * `catchy restore <path/to/bundle>` – restore `config.json` from `config.json.catchy.bak`.
 * `catchy run --runtime <runtime> <path/to/bundle>` – wrap hooks, execute `runtime run -b <bundle> <id>`, and restore the bundle afterward. Prefer repeatable `--runtime-arg ARG` for runtime options; legacy `--runtime-args "..."` is still accepted and uses simple whitespace splitting.
 * `catchy report <trace-dir>` – summarise collected hook traces as text, JSON, or YAML.
+* `catchy diagnose <trace-dir>` – print a concise failure-focused summary of hook traces as text or JSON.
 
 The wrapper is implemented as a hidden `hook-wrapper` mode in the same binary, so the default `wrap` command can use the current executable as the hook wrapper. Trace files are written as JSON under `<bundle>/.catchy/traces` unless `--trace-dir` is provided. The trace schema is documented in [docs/trace-schema.md](docs/trace-schema.md).
 
@@ -124,6 +135,15 @@ Runtime arguments can be passed without shell quoting ambiguity:
 
 ```
 catchy run --runtime runc --runtime-arg --root --runtime-arg /tmp/runc-root bundle
+```
+
+## Diagnose
+
+`catchy diagnose <trace-dir>` helps answer which hook failed and what it reported. It treats non-zero exits, signals, timeouts, and wrapper execution errors as hook failures.
+
+```
+catchy diagnose examples/failing-hook/.work/traces
+catchy diagnose --format json examples/failing-hook/.work/traces
 ```
 
 ## Redaction

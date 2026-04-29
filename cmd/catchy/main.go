@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jiwahn/catchy/internal/diagnose"
 	"github.com/jiwahn/catchy/internal/hook"
 	"github.com/jiwahn/catchy/internal/report"
 	"github.com/jiwahn/catchy/internal/spec"
@@ -28,6 +29,7 @@ Commands:
     restore   Restore config.json from config.json.catchy.bak
     run       Wrap hooks and run the container via an OCI runtime
     report    Summarise collected hook trace logs
+    diagnose  Summarise hook failures from collected traces
 
 Use "catchy <command> -h" for more information about a command.
 `)
@@ -50,6 +52,8 @@ func main() {
 		runCmd(os.Args[2:])
 	case "report":
 		reportCmd(os.Args[2:])
+	case "diagnose":
+		diagnoseCmd(os.Args[2:])
 	case "hook-wrapper":
 		os.Exit(hook.RunWrapper(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	case "version":
@@ -266,6 +270,38 @@ func reportCmd(args []string) {
 		fmt.Print(r.FormatYAML())
 	default:
 		fmt.Fprintf(os.Stderr, "unknown report format: %s\n", *format)
+		os.Exit(1)
+	}
+}
+
+// diagnoseCmd prints a failure-focused summary of hook traces.
+func diagnoseCmd(args []string) {
+	fs := flag.NewFlagSet("diagnose", flag.ExitOnError)
+	format := fs.String("format", "text", "output format: text, json")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy diagnose [--format text] <trace-dir>\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	traceDir := fs.Arg(0)
+	result, err := diagnose.ParseDir(traceDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to diagnose traces: %v\n", err)
+		os.Exit(1)
+	}
+	switch *format {
+	case "text":
+		fmt.Print(result.FormatText())
+	case "json":
+		fmt.Print(result.FormatJSON())
+	default:
+		fmt.Fprintf(os.Stderr, "unknown diagnose format: %s\n", *format)
 		os.Exit(1)
 	}
 }
