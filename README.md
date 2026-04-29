@@ -109,27 +109,36 @@ CATCHY_E2E_RUNTIME=1 CATCHY_E2E_RUNTIMES=runc go test ./test/e2e -v
 
 ### Commands
 
-* `catchy inspect <path/to/bundle>` – parse `config.json` and output hook definitions.
+* `catchy inspect <path/to/bundle>` – parse `config.json` and output hook definitions with redaction enabled by default.
 * `catchy wrap <path/to/bundle>` – rewrite the bundle’s hooks so they point to the wrapper and save the original definitions.
 * `catchy restore <path/to/bundle>` – restore `config.json` from `config.json.catchy.bak`.
-* `catchy run --runtime <runtime> <path/to/bundle>` – wrap hooks, execute `runtime run -b <bundle> <id>`, and restore the bundle afterward.
+* `catchy run --runtime <runtime> <path/to/bundle>` – wrap hooks, execute `runtime run -b <bundle> <id>`, and restore the bundle afterward. Prefer repeatable `--runtime-arg ARG` for runtime options; legacy `--runtime-args "..."` is still accepted and uses simple whitespace splitting.
 * `catchy report <trace-dir>` – summarise collected hook traces as text, JSON, or YAML.
 
-The wrapper is implemented as a hidden `hook-wrapper` mode in the same binary, so the default `wrap` command can use the current executable as the hook wrapper. Trace files are written as JSON under `<bundle>/.catchy/traces` unless `--trace-dir` is provided.
+The wrapper is implemented as a hidden `hook-wrapper` mode in the same binary, so the default `wrap` command can use the current executable as the hook wrapper. Trace files are written as JSON under `<bundle>/.catchy/traces` unless `--trace-dir` is provided. The trace schema is documented in [docs/trace-schema.md](docs/trace-schema.md).
+
+Runtime arguments can be passed without shell quoting ambiguity:
+
+```
+catchy run --runtime runc --runtime-arg --root --runtime-arg /tmp/runc-root bundle
+```
 
 ### Redaction
 
-Trace redaction is enabled by default. Before writing trace JSON, `catchy` redacts common sensitive keys in captured hook args, environment variables, OCI state JSON, and simple `key=value` or `key: value` strings in stdout/stderr. Built-in key patterns include `token`, `password`, `secret`, `credential`, `auth`, `authorization`, `api_key`, `access_key`, `private_key`, and `registry_auth`.
+Trace redaction is enabled by default. `catchy inspect` redacts displayed hook args and env. Before writing trace JSON, `catchy` redacts common sensitive keys in captured hook args, environment variables, OCI state JSON, and simple `key=value` or `key: value` strings in stdout/stderr. Built-in key patterns include `token`, `password`, `secret`, `credential`, `auth`, `authorization`, `api_key`, `access_key`, `private_key`, and `registry_auth`.
 
 Examples:
 
 ```
+catchy inspect bundle
+catchy inspect --no-redact bundle
+catchy inspect --redact-key session_id bundle
 catchy run --runtime runc bundle
 catchy run --no-redact --runtime runc bundle
 catchy run --redact-key session_id --runtime runc bundle
 ```
 
-`--redact-key` can be passed more than once and is also available on `catchy wrap`. Redaction is best-effort hygiene for trace files, not a formal security boundary; review traces before sharing them.
+`--redact-key` can be passed more than once and is also available on `catchy wrap`. Redaction is best-effort hygiene for command output and trace files, not a formal security boundary; review traces before sharing them.
 
 ## Contributing
 

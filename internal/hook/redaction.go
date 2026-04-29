@@ -36,6 +36,24 @@ func defaultRedactionConfig(extraKeys []string) RedactionConfig {
 	return RedactionConfig{Enabled: true, Keys: normalizeRedactionKeys(keys)}
 }
 
+// NewRedactionConfig returns the default redaction configuration plus any
+// caller-provided key patterns.
+func NewRedactionConfig(enabled bool, extraKeys []string) RedactionConfig {
+	cfg := defaultRedactionConfig(extraKeys)
+	cfg.Enabled = enabled
+	return cfg
+}
+
+// RedactEnv redacts sensitive environment entries such as TOKEN=value.
+func RedactEnv(env []string, cfg RedactionConfig) []string {
+	return redactEnv(env, cfg)
+}
+
+// RedactStringSlice redacts sensitive key/value fragments in string slices.
+func RedactStringSlice(values []string, cfg RedactionConfig) []string {
+	return redactStringSlice(values, cfg)
+}
+
 func normalizeRedactionKeys(keys []string) []string {
 	seen := map[string]bool{}
 	var out []string

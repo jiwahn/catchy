@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,8 +66,11 @@ func main() {
 // inspectCmd parses flags and calls the inspect subcommand.
 func inspectCmd(args []string) {
 	fs := flag.NewFlagSet("inspect", flag.ExitOnError)
+	noRedact := fs.Bool("no-redact", false, "disable inspect output redaction")
+	var redactKeys stringListFlag
+	fs.Var(&redactKeys, "redact-key", "additional sensitive key pattern for inspect redaction; may be repeated")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: catchy inspect <bundle>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: catchy inspect [--no-redact] [--redact-key KEY] <bundle>\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -90,12 +94,13 @@ func inspectCmd(args []string) {
 		return
 	}
 
-	printHooks("prestart", b.Hooks.Prestart)
-	printHooks("createRuntime", b.Hooks.CreateRuntime)
-	printHooks("createContainer", b.Hooks.CreateContainer)
-	printHooks("startContainer", b.Hooks.StartContainer)
-	printHooks("poststart", b.Hooks.Poststart)
-	printHooks("poststop", b.Hooks.Poststop)
+	redaction := hook.NewRedactionConfig(!*noRedact, redactKeys)
+	printHooks(os.Stdout, "prestart", b.Hooks.Prestart, redaction)
+	printHooks(os.Stdout, "createRuntime", b.Hooks.CreateRuntime, redaction)
+	printHooks(os.Stdout, "createContainer", b.Hooks.CreateContainer, redaction)
+	printHooks(os.Stdout, "startContainer", b.Hooks.StartContainer, redaction)
+	printHooks(os.Stdout, "poststart", b.Hooks.Poststart, redaction)
+	printHooks(os.Stdout, "poststop", b.Hooks.Poststop, redaction)
 
 }
 
@@ -168,7 +173,9 @@ func runCmd(args []string) {
 	traceDir := fs.String("trace-dir", "", "directory for hook trace JSON files (default: <bundle>/.catchy/traces)")
 	id := fs.String("id", "", "container id to pass to the runtime")
 	keepWrapped := fs.Bool("keep-wrapped", false, "leave config.json wrapped after runtime exits")
-	runtimeArgs := fs.String("runtime-args", "", "extra arguments passed before runtime run, split on whitespace")
+	runtimeArgs := fs.String("runtime-args", "", "legacy extra arguments passed before runtime run, split on whitespace")
+	var runtimeArgList stringListFlag
+	fs.Var(&runtimeArgList, "runtime-arg", "extra argument passed before runtime run; may be repeated")
 	noRedact := fs.Bool("no-redact", false, "disable trace redaction")
 	var redactKeys stringListFlag
 	fs.Var(&redactKeys, "redact-key", "additional sensitive key pattern for trace redaction; may be repeated")
@@ -211,7 +218,7 @@ func runCmd(args []string) {
 		}()
 	}
 
-	cmdArgs := append(splitArgs(*runtimeArgs), "run", "-b", bundle, *id)
+	cmdArgs := buildRuntimeCommandArgs(*runtimeArgs, runtimeArgList, bundle, *id)
 	cmd := exec.Command(*runtime, cmdArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -263,26 +270,26 @@ func reportCmd(args []string) {
 	}
 }
 
-func printHooks(name string, hooks []spec.Hook) {
+func printHooks(w io.Writer, name string, hooks []spec.Hook, redaction hook.RedactionConfig) {
 	if len(hooks) == 0 {
 		return
 	}
 
-	fmt.Printf("%s:\n", name)
+	fmt.Fprintf(w, "%s:\n", name)
 	for i, h := range hooks {
-		fmt.Printf("  [%d]\n", i)
-		fmt.Printf("    path: %s\n", h.Path)
+		fmt.Fprintf(w, "  [%d]\n", i)
+		fmt.Fprintf(w, "    path: %s\n", h.Path)
 
 		if len(h.Args) > 0 {
-			fmt.Printf("    args: %v\n", h.Args)
+			fmt.Fprintf(w, "    args: %v\n", hook.RedactStringSlice(h.Args, redaction))
 		}
 
 		if len(h.Env) > 0 {
-			fmt.Printf("    env: %v\n", h.Env)
+			fmt.Fprintf(w, "    env: %v\n", hook.RedactEnv(h.Env, redaction))
 		}
 
 		if h.Timeout > 0 {
-			fmt.Printf("    timeout: %d\n", h.Timeout)
+			fmt.Fprintf(w, "    timeout: %d\n", h.Timeout)
 		}
 	}
 }
@@ -292,6 +299,13 @@ func splitArgs(raw string) []string {
 		return nil
 	}
 	return strings.Fields(raw)
+}
+
+func buildRuntimeCommandArgs(runtimeArgs string, runtimeArgList []string, bundle string, id string) []string {
+	cmdArgs := append([]string{}, splitArgs(runtimeArgs)...)
+	cmdArgs = append(cmdArgs, runtimeArgList...)
+	cmdArgs = append(cmdArgs, "run", "-b", bundle, id)
+	return cmdArgs
 }
 
 func restoreAfterRun(bundle string) {
