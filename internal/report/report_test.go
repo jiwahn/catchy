@@ -17,6 +17,8 @@ func TestParseDirAndFormatText(t *testing.T) {
 		"durationMs": 12,
 		"exitCode": 1,
 		"stderr": "boom\n",
+		"redacted": true,
+		"redactionKeys": ["token"],
 		"traceVersion": 1
 	}`)
 	if err := os.WriteFile(filepath.Join(dir, "trace.json"), data, 0644); err != nil {
@@ -40,7 +42,8 @@ func TestParseDirAndFormatText(t *testing.T) {
 	if !strings.Contains(r.FormatJSON(), `"hookStage": "prestart"`) {
 		t.Fatalf("unexpected json report")
 	}
-	if !strings.Contains(r.FormatYAML(), `hookStage: "prestart"`) {
+	yaml := r.FormatYAML()
+	if !strings.Contains(yaml, `hookStage: "prestart"`) || !strings.Contains(yaml, `redactionKeys:`) {
 		t.Fatalf("unexpected yaml report")
 	}
 }

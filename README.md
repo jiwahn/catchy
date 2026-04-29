@@ -117,6 +117,20 @@ CATCHY_E2E_RUNTIME=1 CATCHY_E2E_RUNTIMES=runc go test ./test/e2e -v
 
 The wrapper is implemented as a hidden `hook-wrapper` mode in the same binary, so the default `wrap` command can use the current executable as the hook wrapper. Trace files are written as JSON under `<bundle>/.catchy/traces` unless `--trace-dir` is provided.
 
+### Redaction
+
+Trace redaction is enabled by default. Before writing trace JSON, `catchy` redacts common sensitive keys in captured hook args, environment variables, OCI state JSON, and simple `key=value` or `key: value` strings in stdout/stderr. Built-in key patterns include `token`, `password`, `secret`, `credential`, `auth`, `authorization`, `api_key`, `access_key`, `private_key`, and `registry_auth`.
+
+Examples:
+
+```
+catchy run --runtime runc bundle
+catchy run --no-redact --runtime runc bundle
+catchy run --redact-key session_id --runtime runc bundle
+```
+
+`--redact-key` can be passed more than once and is also available on `catchy wrap`. Redaction is best-effort hygiene for trace files, not a formal security boundary; review traces before sharing them.
+
 ## Contributing
 
 Contributions are welcome!  Please open issues or pull requests.  Before implementing new features, consider reading the OCI runtime specification and related issues to understand the constraints【724359104618359†L86-L98】【790362019473417†L232-L249】.

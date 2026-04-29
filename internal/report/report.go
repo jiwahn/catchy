@@ -12,23 +12,25 @@ import (
 
 // Entry represents a single hook execution trace.
 type Entry struct {
-	Timestamp    time.Time       `json:"timestamp"`
-	HookStage    string          `json:"hookStage"`
-	HookIndex    int             `json:"hookIndex"`
-	Path         string          `json:"path"`
-	Args         []string        `json:"args,omitempty"`
-	Env          []string        `json:"env,omitempty"`
-	Timeout      int             `json:"timeout,omitempty"`
-	DurationMs   int64           `json:"durationMs"`
-	ExitCode     int             `json:"exitCode"`
-	Signal       string          `json:"signal,omitempty"`
-	Error        string          `json:"error,omitempty"`
-	TimedOut     bool            `json:"timedOut,omitempty"`
-	Stdout       string          `json:"stdout,omitempty"`
-	Stderr       string          `json:"stderr,omitempty"`
-	State        json.RawMessage `json:"state,omitempty"`
-	TraceVersion int             `json:"traceVersion"`
-	File         string          `json:"file,omitempty"`
+	Timestamp     time.Time       `json:"timestamp"`
+	HookStage     string          `json:"hookStage"`
+	HookIndex     int             `json:"hookIndex"`
+	Path          string          `json:"path"`
+	Args          []string        `json:"args,omitempty"`
+	Env           []string        `json:"env,omitempty"`
+	Timeout       int             `json:"timeout,omitempty"`
+	DurationMs    int64           `json:"durationMs"`
+	ExitCode      int             `json:"exitCode"`
+	Signal        string          `json:"signal,omitempty"`
+	Error         string          `json:"error,omitempty"`
+	TimedOut      bool            `json:"timedOut,omitempty"`
+	Stdout        string          `json:"stdout,omitempty"`
+	Stderr        string          `json:"stderr,omitempty"`
+	State         json.RawMessage `json:"state,omitempty"`
+	Redacted      bool            `json:"redacted"`
+	RedactionKeys []string        `json:"redactionKeys,omitempty"`
+	TraceVersion  int             `json:"traceVersion"`
+	File          string          `json:"file,omitempty"`
 }
 
 // Report summarises a collection of entries.
@@ -97,6 +99,9 @@ func (r *Report) FormatText() string {
 		if e.Error != "" {
 			fmt.Fprintf(&b, "  error: %s\n", e.Error)
 		}
+		if e.Redacted {
+			fmt.Fprintf(&b, "  redacted: true\n")
+		}
 		if e.Stdout != "" {
 			fmt.Fprintf(&b, "  stdout: %s\n", trimMultiline(e.Stdout))
 		}
@@ -138,6 +143,15 @@ func (r *Report) FormatYAML() string {
 		}
 		if e.TimedOut {
 			b.WriteString("    timedOut: true\n")
+		}
+		if e.Redacted {
+			b.WriteString("    redacted: true\n")
+		}
+		if len(e.RedactionKeys) > 0 {
+			b.WriteString("    redactionKeys:\n")
+			for _, key := range e.RedactionKeys {
+				fmt.Fprintf(&b, "      - %q\n", key)
+			}
 		}
 	}
 	return b.String()

@@ -30,7 +30,11 @@ func TestWrapBundleWithOptionsAndRestore(t *testing.T) {
 	}
 
 	traceDir := filepath.Join(dir, "traces")
-	if err := WrapBundleWithOptions(dir, "/tmp/catchy", WrapOptions{TraceDir: traceDir}); err != nil {
+	if err := WrapBundleWithOptions(dir, "/tmp/catchy", WrapOptions{
+		TraceDir:   traceDir,
+		NoRedact:   true,
+		RedactKeys: []string{"session_id"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,6 +51,12 @@ func TestWrapBundleWithOptionsAndRestore(t *testing.T) {
 	}
 	if !contains(h.Env, "CATCHY_TRACE_DIR="+traceDir) {
 		t.Fatalf("expected trace dir env, got %#v", h.Env)
+	}
+	if !contains(h.Args, "--no-redact") || !contains(h.Env, "CATCHY_REDACT_DISABLED=1") {
+		t.Fatalf("expected no-redact metadata, got args=%#v env=%#v", h.Args, h.Env)
+	}
+	if !contains(h.Args, "session_id") || !contains(h.Env, `CATCHY_REDACT_KEYS_JSON=["session_id"]`) {
+		t.Fatalf("expected custom redaction key metadata, got args=%#v env=%#v", h.Args, h.Env)
 	}
 
 	if err := RestoreBundle(dir); err != nil {

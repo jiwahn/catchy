@@ -26,8 +26,10 @@ var ErrNoHooks = errors.New("no hooks found")
 
 // WrapOptions configures how bundle hook rewriting is performed.
 type WrapOptions struct {
-	Force    bool
-	TraceDir string
+	Force      bool
+	TraceDir   string
+	NoRedact   bool
+	RedactKeys []string
 }
 
 // WrapBundle rewrites every OCI hook in bundlePath/config.json to call wrapperPath.
@@ -75,7 +77,7 @@ func WrapBundleWithOptions(bundlePath string, wrapperPath string, opts WrapOptio
 		return fmt.Errorf("unmarshal hooks: %w", err)
 	}
 
-	changed := wrapHooks(&hooks, wrapperPath, traceDir)
+	changed := wrapHooks(&hooks, wrapperPath, traceDir, opts)
 	if !changed {
 		return ErrNoHooks
 	}
@@ -141,7 +143,7 @@ func RewriteHooks(bundlePath string, wrapperPath string) (*spec.Bundle, error) {
 		return nil, err
 	}
 	if b.Hooks != nil {
-		wrapHooks(b.Hooks, wrapperPath, filepath.Join(bundlePath, ".catchy", "traces"))
+		wrapHooks(b.Hooks, wrapperPath, filepath.Join(bundlePath, ".catchy", "traces"), WrapOptions{})
 	}
 	return b, nil
 }
@@ -168,31 +170,31 @@ func GenerateWrapper(outputDir string) (string, error) {
 	return dst, nil
 }
 
-func wrapHooks(hooks *spec.Hooks, wrapperPath string, traceDir string) bool {
+func wrapHooks(hooks *spec.Hooks, wrapperPath string, traceDir string, opts WrapOptions) bool {
 	changed := false
-	changed = wrapHookSlice("prestart", hooks.Prestart, wrapperPath, traceDir) || changed
-	changed = wrapHookSlice("createRuntime", hooks.CreateRuntime, wrapperPath, traceDir) || changed
-	changed = wrapHookSlice("createContainer", hooks.CreateContainer, wrapperPath, traceDir) || changed
-	changed = wrapHookSlice("startContainer", hooks.StartContainer, wrapperPath, traceDir) || changed
-	changed = wrapHookSlice("poststart", hooks.Poststart, wrapperPath, traceDir) || changed
-	changed = wrapHookSlice("poststop", hooks.Poststop, wrapperPath, traceDir) || changed
+	changed = wrapHookSlice("prestart", hooks.Prestart, wrapperPath, traceDir, opts) || changed
+	changed = wrapHookSlice("createRuntime", hooks.CreateRuntime, wrapperPath, traceDir, opts) || changed
+	changed = wrapHookSlice("createContainer", hooks.CreateContainer, wrapperPath, traceDir, opts) || changed
+	changed = wrapHookSlice("startContainer", hooks.StartContainer, wrapperPath, traceDir, opts) || changed
+	changed = wrapHookSlice("poststart", hooks.Poststart, wrapperPath, traceDir, opts) || changed
+	changed = wrapHookSlice("poststop", hooks.Poststop, wrapperPath, traceDir, opts) || changed
 	return changed
 }
 
-func wrapHookSlice(stage string, hooks []spec.Hook, wrapperPath string, traceDir string) bool {
+func wrapHookSlice(stage string, hooks []spec.Hook, wrapperPath string, traceDir string, opts WrapOptions) bool {
 	if len(hooks) == 0 {
 		return false
 	}
 
 	for i := range hooks {
 		orig := hooks[i]
-		hooks[i] = wrapHook(stage, i, orig, wrapperPath, traceDir)
+		hooks[i] = wrapHook(stage, i, orig, wrapperPath, traceDir, opts)
 	}
 
 	return true
 }
 
-func wrapHook(stage string, index int, orig spec.Hook, wrapperPath string, traceDir string) spec.Hook {
+func wrapHook(stage string, index int, orig spec.Hook, wrapperPath string, traceDir string, opts WrapOptions) spec.Hook {
 	indexString := strconv.Itoa(index)
 	args := []string{
 		filepath.Base(wrapperPath),
@@ -212,6 +214,14 @@ func wrapHook(stage string, index int, orig spec.Hook, wrapperPath string, trace
 	if orig.Timeout > 0 {
 		args = append(args, "--orig-timeout", strconv.Itoa(orig.Timeout))
 	}
+	if opts.NoRedact {
+		args = append(args, "--no-redact")
+	}
+	for _, key := range opts.RedactKeys {
+		if key != "" {
+			args = append(args, "--redact-key", key)
+		}
+	}
 
 	env := append([]string{}, orig.Env...)
 	env = append(env,
@@ -228,6 +238,12 @@ func wrapHook(stage string, index int, orig spec.Hook, wrapperPath string, trace
 	}
 	if orig.Timeout > 0 {
 		env = append(env, "CATCHY_ORIG_TIMEOUT="+strconv.Itoa(orig.Timeout))
+	}
+	if opts.NoRedact {
+		env = append(env, "CATCHY_REDACT_DISABLED=1")
+	}
+	if len(opts.RedactKeys) > 0 {
+		env = append(env, "CATCHY_REDACT_KEYS_JSON="+mustJSON(opts.RedactKeys))
 	}
 
 	return spec.Hook{

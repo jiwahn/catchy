@@ -12,28 +12,31 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
 
 // TraceEntry is the on-disk record produced for one hook execution.
 type TraceEntry struct {
-	Timestamp    time.Time       `json:"timestamp"`
-	HookStage    string          `json:"hookStage"`
-	HookIndex    int             `json:"hookIndex"`
-	Path         string          `json:"path"`
-	Args         []string        `json:"args,omitempty"`
-	Env          []string        `json:"env,omitempty"`
-	Timeout      int             `json:"timeout,omitempty"`
-	DurationMs   int64           `json:"durationMs"`
-	ExitCode     int             `json:"exitCode"`
-	Signal       string          `json:"signal,omitempty"`
-	Error        string          `json:"error,omitempty"`
-	TimedOut     bool            `json:"timedOut,omitempty"`
-	Stdout       string          `json:"stdout,omitempty"`
-	Stderr       string          `json:"stderr,omitempty"`
-	State        json.RawMessage `json:"state,omitempty"`
-	TraceVersion int             `json:"traceVersion"`
+	Timestamp     time.Time       `json:"timestamp"`
+	HookStage     string          `json:"hookStage"`
+	HookIndex     int             `json:"hookIndex"`
+	Path          string          `json:"path"`
+	Args          []string        `json:"args,omitempty"`
+	Env           []string        `json:"env,omitempty"`
+	Timeout       int             `json:"timeout,omitempty"`
+	DurationMs    int64           `json:"durationMs"`
+	ExitCode      int             `json:"exitCode"`
+	Signal        string          `json:"signal,omitempty"`
+	Error         string          `json:"error,omitempty"`
+	TimedOut      bool            `json:"timedOut,omitempty"`
+	Stdout        string          `json:"stdout,omitempty"`
+	Stderr        string          `json:"stderr,omitempty"`
+	State         json.RawMessage `json:"state,omitempty"`
+	Redacted      bool            `json:"redacted"`
+	RedactionKeys []string        `json:"redactionKeys,omitempty"`
+	TraceVersion  int             `json:"traceVersion"`
 }
 
 // RunWrapper executes the original hook described by args and writes a trace.
@@ -48,6 +51,14 @@ func RunWrapper(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writ
 	origEnvJSON := fs.String("orig-env-json", getenv("CATCHY_ORIG_ENV_JSON", ""), "original hook env as JSON")
 	origTimeout := fs.Int("orig-timeout", getenvInt("CATCHY_ORIG_TIMEOUT", 0), "original hook timeout in seconds")
 	traceDir := fs.String("trace-dir", getenv("CATCHY_TRACE_DIR", filepath.Join(os.TempDir(), "catchy-traces")), "trace output directory")
+	noRedact := fs.Bool("no-redact", getenv("CATCHY_REDACT_DISABLED", "") == "1", "disable trace redaction")
+	var extraRedactKeys stringListFlag
+	if raw := os.Getenv("CATCHY_REDACT_KEYS_JSON"); raw != "" {
+		if keys, err := parseJSONArray(raw); err == nil {
+			extraRedactKeys = append(extraRedactKeys, keys...)
+		}
+	}
+	fs.Var(&extraRedactKeys, "redact-key", "additional sensitive key pattern for trace redaction")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -77,6 +88,10 @@ func RunWrapper(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writ
 		origEnv = os.Environ()
 		traceEnv = nil
 	}
+	redaction := defaultRedactionConfig(extraRedactKeys)
+	if *noRedact {
+		redaction.Enabled = false
+	}
 
 	state, err := io.ReadAll(stdin)
 	if err != nil {
@@ -89,11 +104,15 @@ func RunWrapper(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writ
 		HookStage:    *stage,
 		HookIndex:    *index,
 		Path:         *origPath,
-		Args:         origArgs,
-		Env:          traceEnv,
+		Args:         redactStringSlice(origArgs, redaction),
+		Env:          redactEnv(traceEnv, redaction),
 		Timeout:      *origTimeout,
-		State:        json.RawMessage(state),
-		TraceVersion: 1,
+		State:        redactJSON(json.RawMessage(state), redaction),
+		Redacted:     redaction.Enabled,
+		TraceVersion: 2,
+	}
+	if redaction.Enabled {
+		entry.RedactionKeys = redaction.Keys
 	}
 	if origEnvSpecified && traceEnv == nil {
 		entry.Env = []string{}
@@ -118,8 +137,8 @@ func RunWrapper(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writ
 	start := time.Now()
 	err = cmd.Run()
 	entry.DurationMs = time.Since(start).Milliseconds()
-	entry.Stdout = stdoutBuf.String()
-	entry.Stderr = stderrBuf.String()
+	entry.Stdout = redactText(stdoutBuf.String(), redaction)
+	entry.Stderr = redactText(stderrBuf.String(), redaction)
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		entry.TimedOut = true
 	}
@@ -127,7 +146,7 @@ func RunWrapper(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writ
 	exitCode := 0
 	if err != nil {
 		exitCode = 1
-		entry.Error = err.Error()
+		entry.Error = redactText(err.Error(), redaction)
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
@@ -176,6 +195,17 @@ func parseJSONArray(raw string) ([]string, error) {
 		return nil, err
 	}
 	return values, nil
+}
+
+type stringListFlag []string
+
+func (f *stringListFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *stringListFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
 }
 
 func getenv(key string, fallback string) string {

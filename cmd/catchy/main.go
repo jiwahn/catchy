@@ -106,8 +106,11 @@ func wrapCmd(args []string) {
 	wrapperPath := fs.String("wrapper", defaultWrapper, "path to the catchy wrapper executable")
 	traceDir := fs.String("trace-dir", "", "directory for hook trace JSON files (default: <bundle>/.catchy/traces)")
 	force := fs.Bool("force", false, "overwrite an existing config.json.catchy.bak backup")
+	noRedact := fs.Bool("no-redact", false, "disable trace redaction")
+	var redactKeys stringListFlag
+	fs.Var(&redactKeys, "redact-key", "additional sensitive key pattern for trace redaction; may be repeated")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: catchy wrap [--wrapper /path/to/catchy] [--trace-dir DIR] [--force] <bundle>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: catchy wrap [--wrapper /path/to/catchy] [--trace-dir DIR] [--force] [--no-redact] [--redact-key KEY] <bundle>\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -118,7 +121,12 @@ func wrapCmd(args []string) {
 		os.Exit(1)
 	}
 	bundle := fs.Arg(0)
-	if err := hook.WrapBundleWithOptions(bundle, *wrapperPath, hook.WrapOptions{Force: *force, TraceDir: *traceDir}); err != nil {
+	if err := hook.WrapBundleWithOptions(bundle, *wrapperPath, hook.WrapOptions{
+		Force:      *force,
+		TraceDir:   *traceDir,
+		NoRedact:   *noRedact,
+		RedactKeys: redactKeys,
+	}); err != nil {
 		if errors.Is(err, hook.ErrNoHooks) {
 			fmt.Println("no hooks found")
 			return
@@ -161,8 +169,11 @@ func runCmd(args []string) {
 	id := fs.String("id", "", "container id to pass to the runtime")
 	keepWrapped := fs.Bool("keep-wrapped", false, "leave config.json wrapped after runtime exits")
 	runtimeArgs := fs.String("runtime-args", "", "extra arguments passed before runtime run, split on whitespace")
+	noRedact := fs.Bool("no-redact", false, "disable trace redaction")
+	var redactKeys stringListFlag
+	fs.Var(&redactKeys, "redact-key", "additional sensitive key pattern for trace redaction; may be repeated")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: catchy run [--runtime runc] [--wrapper /path/to/catchy] [--trace-dir DIR] <bundle>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: catchy run [--runtime runc] [--wrapper /path/to/catchy] [--trace-dir DIR] [--no-redact] [--redact-key KEY] <bundle>\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -178,7 +189,12 @@ func runCmd(args []string) {
 	}
 
 	wrapped := false
-	err := hook.WrapBundleWithOptions(bundle, *wrapperPath, hook.WrapOptions{Force: true, TraceDir: *traceDir})
+	err := hook.WrapBundleWithOptions(bundle, *wrapperPath, hook.WrapOptions{
+		Force:      true,
+		TraceDir:   *traceDir,
+		NoRedact:   *noRedact,
+		RedactKeys: redactKeys,
+	})
 	if err != nil && !errors.Is(err, hook.ErrNoHooks) {
 		fmt.Fprintf(os.Stderr, "failed to wrap bundle: %v\n", err)
 		os.Exit(1)
@@ -282,4 +298,15 @@ func restoreAfterRun(bundle string) {
 	if err := hook.RestoreBundle(bundle); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to restore bundle: %v\n", err)
 	}
+}
+
+type stringListFlag []string
+
+func (f *stringListFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *stringListFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
 }
