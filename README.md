@@ -50,6 +50,26 @@ cd catchy
 go build ./cmd/catchy
 ```
 
+### Test
+
+Unit tests run without requiring an OCI runtime:
+
+```
+go test ./...
+```
+
+Runtime integration tests are opt-in because they require a host that can run OCI containers with `runc` or `crun`:
+
+```
+CATCHY_E2E_RUNTIME=1 go test ./test/e2e -v
+```
+
+By default the integration test tries `runc` and `crun`. To choose specific runtimes:
+
+```
+CATCHY_E2E_RUNTIME=1 CATCHY_E2E_RUNTIMES=runc go test ./test/e2e -v
+```
+
 ### Commands
 
 * `catchy inspect <path/to/bundle>` – parse `config.json` and output hook definitions.
