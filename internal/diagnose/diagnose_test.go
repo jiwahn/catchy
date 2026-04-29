@@ -72,6 +72,8 @@ func TestDiagnoseNonZeroExit(t *testing.T) {
 		"exit: 42",
 		"redacted: true",
 		"likely cause: hook exited with non-zero status",
+		"hints:",
+		"required environment variable appears to be missing. Check hook env configuration in config.json or the invoking runtime.",
 		"stderr: demo prestart hook: missing required GPU_DEVICE_ID\\nhint: fix config",
 		"stdout: partial stdout",
 		"trace: /tmp/trace.json",
@@ -89,7 +91,7 @@ func TestDiagnoseSignal(t *testing.T) {
 			HookIndex:  1,
 			Path:       "/bin/hook",
 			ExitCode:   -1,
-			Signal:     "killed",
+			Signal:     "SIGILL",
 			DurationMs: 5,
 		},
 	}})
@@ -97,6 +99,7 @@ func TestDiagnoseSignal(t *testing.T) {
 	if got := result.Failures[0].LikelyCause; got != "hook terminated by signal" {
 		t.Fatalf("unexpected cause: %q", got)
 	}
+	assertHint(t, result.Failures[0].Hints, "hook process hit an illegal CPU instruction")
 }
 
 func TestDiagnoseTimeout(t *testing.T) {
@@ -116,6 +119,7 @@ func TestDiagnoseTimeout(t *testing.T) {
 	if text := result.FormatText(); !strings.Contains(text, "timed out: true") {
 		t.Fatalf("diagnosis text missing timeout:\n%s", text)
 	}
+	assertHint(t, result.Failures[0].Hints, "hook exceeded its configured timeout")
 }
 
 func TestDiagnoseJSONOutput(t *testing.T) {
@@ -124,7 +128,7 @@ func TestDiagnoseJSONOutput(t *testing.T) {
 			HookStage:  "prestart",
 			HookIndex:  0,
 			Path:       "/bin/false",
-			ExitCode:   1,
+			ExitCode:   127,
 			DurationMs: 1,
 		},
 	}})
@@ -135,6 +139,9 @@ func TestDiagnoseJSONOutput(t *testing.T) {
 	}
 	if decoded.TotalTraces != 1 || decoded.FailedTraces != 1 || decoded.Failures[0].LikelyCause != "hook exited with non-zero status" {
 		t.Fatalf("unexpected decoded result: %#v", decoded)
+	}
+	if decoded.Failures[0].Hints == nil {
+		t.Fatalf("expected hints field to be present in JSON failure")
 	}
 }
 
@@ -164,4 +171,127 @@ func TestParseDirReadsTraceFiles(t *testing.T) {
 	if result.TotalTraces != 1 || result.FailedTraces != 1 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
+}
+
+func TestDiagnoseHints(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry report.Entry
+		want  string
+	}{
+		{
+			name: "permission denied",
+			entry: report.Entry{
+				HookStage: "prestart",
+				Path:      "/hooks/setup",
+				Error:     "fork/exec /hooks/setup: permission denied",
+			},
+			want: "hook path or one of its referenced files may not be executable or accessible",
+		},
+		{
+			name: "no such file",
+			entry: report.Entry{
+				HookStage: "prestart",
+				Path:      "/missing/hook",
+				ExitCode:  127,
+				Error:     `exec: "/missing/hook": stat /missing/hook: no such file or directory`,
+			},
+			want: "hook executable or interpreter may be missing on the host",
+		},
+		{
+			name: "executable file not found",
+			entry: report.Entry{
+				HookStage: "prestart",
+				Error:     `exec: "hook": executable file not found in $PATH`,
+			},
+			want: "hook executable could not be resolved",
+		},
+		{
+			name: "exec format error",
+			entry: report.Entry{
+				HookStage: "prestart",
+				Error:     "fork/exec /hooks/setup: exec format error",
+			},
+			want: "wrong architecture or may be missing a valid shebang",
+		},
+		{
+			name: "sigkill",
+			entry: report.Entry{
+				HookStage: "prestart",
+				Signal:    "SIGKILL",
+			},
+			want: "hook was killed by SIGKILL",
+		},
+		{
+			name: "deadline text",
+			entry: report.Entry{
+				HookStage: "prestart",
+				Error:     "context deadline exceeded",
+			},
+			want: "hook exceeded its configured timeout",
+		},
+		{
+			name: "missing env",
+			entry: report.Entry{
+				HookStage: "prestart",
+				ExitCode:  1,
+				Stderr:    "TOKEN is not set",
+			},
+			want: "required environment variable appears to be missing",
+		},
+		{
+			name: "exit 126",
+			entry: report.Entry{
+				HookStage: "prestart",
+				ExitCode:  126,
+			},
+			want: "command was found but could not be executed",
+		},
+		{
+			name: "exit 127",
+			entry: report.Entry{
+				HookStage: "prestart",
+				ExitCode:  127,
+			},
+			want: "command was not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FromReport(&report.Report{Entries: []report.Entry{tt.entry}})
+			if result.FailedTraces != 1 {
+				t.Fatalf("expected one failure, got %#v", result)
+			}
+			assertHint(t, result.Failures[0].Hints, tt.want)
+			if text := result.FormatText(); !strings.Contains(text, tt.want) {
+				t.Fatalf("text output missing hint %q:\n%s", tt.want, text)
+			}
+		})
+	}
+}
+
+func TestDiagnoseMultipleFailures(t *testing.T) {
+	result := FromReport(&report.Report{Entries: []report.Entry{
+		{HookStage: "prestart", HookIndex: 0, Path: "/missing", ExitCode: 127},
+		{HookStage: "poststop", HookIndex: 1, Path: "/slow", TimedOut: true},
+	}})
+
+	if result.TotalTraces != 2 || result.FailedTraces != 2 || len(result.Failures) != 2 {
+		t.Fatalf("unexpected multiple failure result: %#v", result)
+	}
+	text := result.FormatText()
+	if !strings.Contains(text, "prestart[0] failed") || !strings.Contains(text, "poststop[1] failed") {
+		t.Fatalf("text output missing failures:\n%s", text)
+	}
+}
+
+func assertHint(t *testing.T, hints []string, wantSubstring string) {
+	t.Helper()
+	for _, hint := range hints {
+		if strings.Contains(hint, wantSubstring) {
+			return
+		}
+	}
+	t.Fatalf("missing hint containing %q in %#v", wantSubstring, hints)
 }

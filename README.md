@@ -144,7 +144,7 @@ catchy run --runtime runc --runtime-arg --root --runtime-arg /tmp/runc-root bund
 
 ## Diagnose
 
-`catchy diagnose <trace-dir>` helps answer which hook failed and what it reported. It treats non-zero exits, signals, timeouts, and wrapper execution errors as hook failures.
+`catchy diagnose <trace-dir>` helps answer which hook failed and what it reported. It treats non-zero exits, signals, timeouts, and wrapper execution errors as hook failures. It also provides simple pattern-based hints for common issues such as missing hook executables, permission denied errors, exec format errors, timeouts, and missing environment variables.
 
 ```
 catchy diagnose examples/failing-hook/.work/traces
