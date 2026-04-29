@@ -21,6 +21,7 @@ The containerd issue **"Make it POSSIBLE to debug cdi hooks"** complains that th
 ## Features
 
 * **Inspect** a bundle’s `config.json` and summarize its hooks.
+* **Check** hook definitions before runtime execution.
 * **Wrap** existing hooks with a wrapper that captures stdout, stderr, exit status, duration, and OCI hook state.
 * **Run** a bundle through a chosen OCI runtime (`runc`, `crun`, etc.) while collecting hook traces.
 * **Report** hook execution traces as text, JSON, or YAML.
@@ -85,8 +86,9 @@ This project is intentionally focused on OCI runtime hook debugging. It is not a
 ```
 catchy/
 ├── cmd/
-│   └── catchy/     # CLI entry points (inspect, wrap, run, report)
+│   └── catchy/     # CLI entry points (inspect, check, wrap, run, report)
 ├── internal/
+│   ├── check/         # preflight validation for OCI hook definitions
 │   ├── spec/          # loading and validating OCI config.json
 │   ├── hook/          # hook rewriting and wrapper generation
 │   └── report/        # reporting and trace summarisation
@@ -130,6 +132,7 @@ CATCHY_E2E_RUNTIME=1 CATCHY_E2E_RUNTIMES=runc go test ./test/e2e -v
 ## Commands
 
 * `catchy inspect <path/to/bundle>` – parse `config.json` and output hook definitions with redaction enabled by default.
+* `catchy check <path/to/bundle>` – validate hook definitions before runtime execution.
 * `catchy wrap <path/to/bundle>` – rewrite the bundle’s hooks so they point to the wrapper and save the original definitions.
 * `catchy restore <path/to/bundle>` – restore `config.json` from `config.json.catchy.bak`.
 * `catchy run --runtime <runtime> <path/to/bundle>` – wrap hooks, execute `runtime run -b <bundle> <id>`, and restore the bundle afterward. Prefer repeatable `--runtime-arg ARG` for runtime options; legacy `--runtime-args "..."` is still accepted and uses simple whitespace splitting.
@@ -143,6 +146,17 @@ Runtime arguments can be passed without shell quoting ambiguity:
 ```
 catchy run --runtime runc --runtime-arg --root --runtime-arg /tmp/runc-root bundle
 ```
+
+## Check
+
+`catchy check <bundle>` validates hook definitions before runtime execution. It checks host-side hook paths, executable permissions, script interpreters, and timeout sanity.
+
+```
+catchy check bundle
+catchy check --format json bundle
+```
+
+This is a preflight check for common hook setup mistakes, not a full OCI spec validator or security scanner.
 
 ## Diagnose
 

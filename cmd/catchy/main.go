@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jiwahn/catchy/internal/check"
 	"github.com/jiwahn/catchy/internal/diagnose"
 	"github.com/jiwahn/catchy/internal/hook"
 	"github.com/jiwahn/catchy/internal/report"
@@ -25,6 +26,7 @@ func printUsage() {
 
 Commands:
     inspect   Inspect an OCI bundle and list its hooks
+    check     Preflight validate OCI hook definitions
     wrap      Rewrite hooks in a bundle to wrap them with a trace wrapper
     restore   Restore config.json from config.json.catchy.bak
     run       Wrap hooks and run the container via an OCI runtime
@@ -44,6 +46,8 @@ func main() {
 	switch cmd {
 	case "inspect":
 		inspectCmd(os.Args[2:])
+	case "check":
+		checkCmd(os.Args[2:])
 	case "wrap":
 		wrapCmd(os.Args[2:])
 	case "restore":
@@ -63,6 +67,42 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
+		os.Exit(1)
+	}
+}
+
+// checkCmd validates OCI hook definitions before runtime execution.
+func checkCmd(args []string) {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	format := fs.String("format", "text", "output format: text, json")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy check [--format text] <bundle>\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	result, err := check.CheckBundle(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to check bundle: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch *format {
+	case "text":
+		fmt.Print(result.FormatText())
+	case "json":
+		fmt.Print(result.FormatJSON())
+	default:
+		fmt.Fprintf(os.Stderr, "unknown check format: %s\n", *format)
+		os.Exit(1)
+	}
+	if result.HasProblems() {
 		os.Exit(1)
 	}
 }
