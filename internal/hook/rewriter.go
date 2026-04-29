@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"catchy/internal/spec"
+	"github.com/jiwahn/catchy/internal/spec"
 )
 
 const (

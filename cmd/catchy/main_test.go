@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"catchy/internal/hook"
-	"catchy/internal/spec"
+	"github.com/jiwahn/catchy/internal/hook"
+	"github.com/jiwahn/catchy/internal/spec"
 )
 
 func TestPrintHooksRedactsByDefault(t *testing.T) {

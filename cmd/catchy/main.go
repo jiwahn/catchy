@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"catchy/internal/hook"
-	"catchy/internal/report"
-	"catchy/internal/spec"
+	"github.com/jiwahn/catchy/internal/hook"
+	"github.com/jiwahn/catchy/internal/report"
+	"github.com/jiwahn/catchy/internal/spec"
 )
 
 // version of catchy (update when releasing)

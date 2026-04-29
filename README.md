@@ -1,7 +1,8 @@
 # catchy
 
-`catchy` is a lightweight observability and debugging toolkit for **OCI runtime hooks**.  
-It helps container developers and operators inspect, trace and diagnose hook execution failures across OCI‑compatible runtimes such as `runc`, `crun`, and `youki`.
+`catchy` is a lightweight CLI for debugging container startup failures caused by **OCI runtime hooks**.
+
+It works at the OCI bundle level: it inspects and rewrites `config.json` hooks, runs them through a small wrapper, and reports what happened. It is focused on runtime hooks and does not replace general container observability or debugging tools.
 
 ## Motivation
 
@@ -15,15 +16,15 @@ OCI runtime create failed: runc create failed: unable to start container process
 
 The containerd issue **"Make it POSSIBLE to debug cdi hooks"** complains that there is no way to see which hook ran, what arguments and environment it received, or why it failed【790362019473417†L232-L249】.  While `crun` exposes annotations (`run.oci.hooks.stdout`/`run.oci.hooks.stderr`) to redirect hook output to files【424383501769946†L440-L450】, this is runtime‑specific and not available in runc or containerd.
 
-`catchy` addresses this gap by providing a cross‑runtime way to observe and debug OCI hooks **without patching the runtime**.
+`catchy` addresses this gap by providing a bundle-level way to trace OCI hooks **without patching the runtime**.
 
 ## Features
 
-* **Inspect** a bundle’s `config.json` and summarise its hooks (type, path, args, env, timeout).  
-* **Wrap** existing hooks with a thin wrapper that captures stdout, stderr, exit status, duration and the state JSON passed to the hook.  
-* **Run** a container using a chosen OCI runtime (`runc`, `crun`, etc.) while automatically wrapping its hooks and collecting traces.  
-* **Report** hook execution traces in human‑readable or machine‑readable formats (text, JSON, YAML).  
-* Designed as an external CLI; no need to modify containerd or the runtime.
+* **Inspect** a bundle’s `config.json` and summarize its hooks.
+* **Wrap** existing hooks with a wrapper that captures stdout, stderr, exit status, duration, and OCI hook state.
+* **Run** a bundle through a chosen OCI runtime (`runc`, `crun`, etc.) while collecting hook traces.
+* **Report** hook execution traces as text, JSON, or YAML.
+* Designed as an external CLI; no need to patch the runtime.
 
 ## Before / After
 
@@ -75,19 +76,21 @@ catchy/
 └── go.mod
 ```
 
-## Getting started
+## Install
 
-This repository contains a working bootstrap of the CLI and internal packages.  
-The project is written in Go (go 1.20+) and can be compiled as a static binary.
-
-### Build
+Install with Go:
 
 ```
-cd catchy
-go build ./cmd/catchy
+go install github.com/jiwahn/catchy/cmd/catchy@latest
 ```
 
-### Test
+Or build locally from a checkout:
+
+```
+go build -o catchy ./cmd/catchy
+```
+
+## Test
 
 Unit tests run without requiring an OCI runtime:
 
@@ -107,7 +110,7 @@ By default the integration test tries `runc` and `crun`. To choose specific runt
 CATCHY_E2E_RUNTIME=1 CATCHY_E2E_RUNTIMES=runc go test ./test/e2e -v
 ```
 
-### Commands
+## Commands
 
 * `catchy inspect <path/to/bundle>` – parse `config.json` and output hook definitions with redaction enabled by default.
 * `catchy wrap <path/to/bundle>` – rewrite the bundle’s hooks so they point to the wrapper and save the original definitions.
@@ -123,7 +126,7 @@ Runtime arguments can be passed without shell quoting ambiguity:
 catchy run --runtime runc --runtime-arg --root --runtime-arg /tmp/runc-root bundle
 ```
 
-### Redaction
+## Redaction
 
 Trace redaction is enabled by default. `catchy inspect` redacts displayed hook args and env. Before writing trace JSON, `catchy` redacts common sensitive keys in captured hook args, environment variables, OCI state JSON, and simple `key=value` or `key: value` strings in stdout/stderr. Built-in key patterns include `token`, `password`, `secret`, `credential`, `auth`, `authorization`, `api_key`, `access_key`, `private_key`, and `registry_auth`.
 
@@ -140,6 +143,22 @@ catchy run --redact-key session_id --runtime runc bundle
 
 `--redact-key` can be passed more than once and is also available on `catchy wrap`. Redaction is best-effort hygiene for command output and trace files, not a formal security boundary; review traces before sharing them.
 
+## Known Limitations
+
+* `catchy` works at the OCI bundle level.
+* It rewrites `config.json` and restores it afterward.
+* Wrapper-based tracing may not be perfectly transparent for hooks that depend on exact `argv[0]`, environment, cwd, signal behavior, or timing.
+* Redaction is best-effort and not a security boundary.
+* Docker, nerdctl, Kubernetes, and containerd workflows are not directly integrated yet.
+* Legacy `--runtime-args` uses simple whitespace splitting; prefer repeatable `--runtime-arg`.
+
+## Roadmap
+
+* Add a failure-focused `diagnose` command.
+* Add a CDI-like hook failure demo.
+* Improve runtime compatibility testing.
+* Consider helpers for locating runtime bundles created by containerd.
+
 ## Contributing
 
-Contributions are welcome!  Please open issues or pull requests.  Before implementing new features, consider reading the OCI runtime specification and related issues to understand the constraints【724359104618359†L86-L98】【790362019473417†L232-L249】.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"catchy/internal/spec"
+	"github.com/jiwahn/catchy/internal/spec"
 )
 
 func TestWrapBundleWithOptionsAndRestore(t *testing.T) {
