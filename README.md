@@ -40,9 +40,8 @@ catchy/
 
 ## Getting started
 
-This repository currently contains the skeleton for the CLI and internal packages.  
-The project is intended to be written in Go (go 1.20+) and compiled as a static binary.  
-Since this is an early bootstrap, the code is not yet functional – it lays out the foundation for further development.
+This repository contains a working bootstrap of the CLI and internal packages.  
+The project is written in Go (go 1.20+) and can be compiled as a static binary.
 
 ### Build
 
@@ -51,12 +50,15 @@ cd catchy
 go build ./cmd/catchy
 ```
 
-### Commands (planned)
+### Commands
 
 * `catchy inspect <path/to/bundle>` – parse `config.json` and output hook definitions.
 * `catchy wrap <path/to/bundle>` – rewrite the bundle’s hooks so they point to the wrapper and save the original definitions.
-* `catchy run --runtime <runtime> <path/to/bundle>` – wrap hooks and execute `create`/`start` via the chosen runtime.
-* `catchy report <trace-dir>` – summarise collected hook traces.
+* `catchy restore <path/to/bundle>` – restore `config.json` from `config.json.catchy.bak`.
+* `catchy run --runtime <runtime> <path/to/bundle>` – wrap hooks, execute `runtime run -b <bundle> <id>`, and restore the bundle afterward.
+* `catchy report <trace-dir>` – summarise collected hook traces as text, JSON, or YAML.
+
+The wrapper is implemented as a hidden `hook-wrapper` mode in the same binary, so the default `wrap` command can use the current executable as the hook wrapper. Trace files are written as JSON under `<bundle>/.catchy/traces` unless `--trace-dir` is provided.
 
 ## Contributing
 

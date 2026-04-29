@@ -26,7 +26,8 @@ var ErrNoHooks = errors.New("no hooks found")
 
 // WrapOptions configures how bundle hook rewriting is performed.
 type WrapOptions struct {
-	Force bool
+	Force    bool
+	TraceDir string
 }
 
 // WrapBundle rewrites every OCI hook in bundlePath/config.json to call wrapperPath.
@@ -39,6 +40,13 @@ func WrapBundle(bundlePath string, wrapperPath string) error {
 func WrapBundleWithOptions(bundlePath string, wrapperPath string, opts WrapOptions) error {
 	if wrapperPath == "" {
 		wrapperPath = defaultWrapperPath
+	}
+	if opts.TraceDir == "" {
+		opts.TraceDir = filepath.Join(bundlePath, ".catchy", "traces")
+	}
+	traceDir, err := filepath.Abs(opts.TraceDir)
+	if err != nil {
+		return fmt.Errorf("resolve trace dir: %w", err)
 	}
 
 	cfgPath := filepath.Join(bundlePath, "config.json")
@@ -67,7 +75,7 @@ func WrapBundleWithOptions(bundlePath string, wrapperPath string, opts WrapOptio
 		return fmt.Errorf("unmarshal hooks: %w", err)
 	}
 
-	changed := wrapHooks(&hooks, wrapperPath)
+	changed := wrapHooks(&hooks, wrapperPath, traceDir)
 	if !changed {
 		return ErrNoHooks
 	}
@@ -133,7 +141,7 @@ func RewriteHooks(bundlePath string, wrapperPath string) (*spec.Bundle, error) {
 		return nil, err
 	}
 	if b.Hooks != nil {
-		wrapHooks(b.Hooks, wrapperPath)
+		wrapHooks(b.Hooks, wrapperPath, filepath.Join(bundlePath, ".catchy", "traces"))
 	}
 	return b, nil
 }
@@ -143,41 +151,56 @@ func RewriteHooks(bundlePath string, wrapperPath string) (*spec.Bundle, error) {
 // symbolic link to a precompiled wrapper.  Here we return a
 // placeholder path.
 func GenerateWrapper(outputDir string) (string, error) {
-	// TODO: build or extract the wrapper binary into outputDir.
-	return filepath.Join(outputDir, fmt.Sprintf("wrapper-%d", time.Now().Unix())), nil
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("create wrapper dir: %w", err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate current executable: %w", err)
+	}
+	dst := filepath.Join(outputDir, fmt.Sprintf("catchy-wrapper-%d", time.Now().Unix()))
+	if err := copyFile(self, dst); err != nil {
+		return "", fmt.Errorf("copy wrapper: %w", err)
+	}
+	if err := os.Chmod(dst, 0755); err != nil {
+		return "", fmt.Errorf("chmod wrapper: %w", err)
+	}
+	return dst, nil
 }
 
-func wrapHooks(hooks *spec.Hooks, wrapperPath string) bool {
+func wrapHooks(hooks *spec.Hooks, wrapperPath string, traceDir string) bool {
 	changed := false
-	changed = wrapHookSlice("prestart", hooks.Prestart, wrapperPath) || changed
-	changed = wrapHookSlice("createRuntime", hooks.CreateRuntime, wrapperPath) || changed
-	changed = wrapHookSlice("createContainer", hooks.CreateContainer, wrapperPath) || changed
-	changed = wrapHookSlice("startContainer", hooks.StartContainer, wrapperPath) || changed
-	changed = wrapHookSlice("poststart", hooks.Poststart, wrapperPath) || changed
-	changed = wrapHookSlice("poststop", hooks.Poststop, wrapperPath) || changed
+	changed = wrapHookSlice("prestart", hooks.Prestart, wrapperPath, traceDir) || changed
+	changed = wrapHookSlice("createRuntime", hooks.CreateRuntime, wrapperPath, traceDir) || changed
+	changed = wrapHookSlice("createContainer", hooks.CreateContainer, wrapperPath, traceDir) || changed
+	changed = wrapHookSlice("startContainer", hooks.StartContainer, wrapperPath, traceDir) || changed
+	changed = wrapHookSlice("poststart", hooks.Poststart, wrapperPath, traceDir) || changed
+	changed = wrapHookSlice("poststop", hooks.Poststop, wrapperPath, traceDir) || changed
 	return changed
 }
 
-func wrapHookSlice(stage string, hooks []spec.Hook, wrapperPath string) bool {
+func wrapHookSlice(stage string, hooks []spec.Hook, wrapperPath string, traceDir string) bool {
 	if len(hooks) == 0 {
 		return false
 	}
 
 	for i := range hooks {
 		orig := hooks[i]
-		hooks[i] = wrapHook(stage, i, orig, wrapperPath)
+		hooks[i] = wrapHook(stage, i, orig, wrapperPath, traceDir)
 	}
 
 	return true
 }
 
-func wrapHook(stage string, index int, orig spec.Hook, wrapperPath string) spec.Hook {
+func wrapHook(stage string, index int, orig spec.Hook, wrapperPath string, traceDir string) spec.Hook {
 	indexString := strconv.Itoa(index)
 	args := []string{
 		filepath.Base(wrapperPath),
+		"hook-wrapper",
 		"--hook-stage", stage,
 		"--hook-index", indexString,
 		"--orig-path", orig.Path,
+		"--trace-dir", traceDir,
 	}
 
 	if len(orig.Args) > 0 {
@@ -195,6 +218,7 @@ func wrapHook(stage string, index int, orig spec.Hook, wrapperPath string) spec.
 		"CATCHY_ORIG_PATH="+orig.Path,
 		"CATCHY_HOOK_STAGE="+stage,
 		"CATCHY_HOOK_INDEX="+indexString,
+		"CATCHY_TRACE_DIR="+traceDir,
 	)
 	if len(orig.Args) > 0 {
 		env = append(env, "CATCHY_ORIG_ARGS_JSON="+mustJSON(orig.Args))

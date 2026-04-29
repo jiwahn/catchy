@@ -5,9 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"catchy/internal/hook"
+	"catchy/internal/report"
 	"catchy/internal/spec"
 )
 
@@ -46,6 +49,8 @@ func main() {
 		runCmd(os.Args[2:])
 	case "report":
 		reportCmd(os.Args[2:])
+	case "hook-wrapper":
+		os.Exit(hook.RunWrapper(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
@@ -72,9 +77,6 @@ func inspectCmd(args []string) {
 		os.Exit(1)
 	}
 	bundle := fs.Arg(0)
-	// TODO: call internal/spec to load and report hooks
-	fmt.Printf("inspect called on bundle %s\n", bundle)
-
 	cfgPath := filepath.Join(bundle, "config.json")
 
 	b, err := spec.LoadBundle(cfgPath)
@@ -100,10 +102,12 @@ func inspectCmd(args []string) {
 // wrapCmd rewrites hooks in the bundle.
 func wrapCmd(args []string) {
 	fs := flag.NewFlagSet("wrap", flag.ExitOnError)
-	wrapperPath := fs.String("wrapper", "/usr/local/bin/catchy-wrapper", "path to the catchy wrapper executable")
+	defaultWrapper, _ := os.Executable()
+	wrapperPath := fs.String("wrapper", defaultWrapper, "path to the catchy wrapper executable")
+	traceDir := fs.String("trace-dir", "", "directory for hook trace JSON files (default: <bundle>/.catchy/traces)")
 	force := fs.Bool("force", false, "overwrite an existing config.json.catchy.bak backup")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: catchy wrap [--wrapper /path/to/catchy-wrapper] [--force] <bundle>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: catchy wrap [--wrapper /path/to/catchy] [--trace-dir DIR] [--force] <bundle>\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -114,7 +118,7 @@ func wrapCmd(args []string) {
 		os.Exit(1)
 	}
 	bundle := fs.Arg(0)
-	if err := hook.WrapBundleWithOptions(bundle, *wrapperPath, hook.WrapOptions{Force: *force}); err != nil {
+	if err := hook.WrapBundleWithOptions(bundle, *wrapperPath, hook.WrapOptions{Force: *force, TraceDir: *traceDir}); err != nil {
 		if errors.Is(err, hook.ErrNoHooks) {
 			fmt.Println("no hooks found")
 			return
@@ -151,8 +155,14 @@ func restoreCmd(args []string) {
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	runtime := fs.String("runtime", "runc", "OCI runtime to use (runc, crun, etc.)")
+	defaultWrapper, _ := os.Executable()
+	wrapperPath := fs.String("wrapper", defaultWrapper, "path to the catchy wrapper executable")
+	traceDir := fs.String("trace-dir", "", "directory for hook trace JSON files (default: <bundle>/.catchy/traces)")
+	id := fs.String("id", "", "container id to pass to the runtime")
+	keepWrapped := fs.Bool("keep-wrapped", false, "leave config.json wrapped after runtime exits")
+	runtimeArgs := fs.String("runtime-args", "", "extra arguments passed before runtime run, split on whitespace")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: catchy run [--runtime runc] <bundle>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: catchy run [--runtime runc] [--wrapper /path/to/catchy] [--trace-dir DIR] <bundle>\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -163,8 +173,39 @@ func runCmd(args []string) {
 		os.Exit(1)
 	}
 	bundle := fs.Arg(0)
-	// TODO: call internal/hook.wrap + exec runtime
-	fmt.Printf("run called on bundle %s with runtime %s\n", bundle, *runtime)
+	if *id == "" {
+		*id = fmt.Sprintf("catchy-%d", os.Getpid())
+	}
+
+	wrapped := false
+	err := hook.WrapBundleWithOptions(bundle, *wrapperPath, hook.WrapOptions{Force: true, TraceDir: *traceDir})
+	if err != nil && !errors.Is(err, hook.ErrNoHooks) {
+		fmt.Fprintf(os.Stderr, "failed to wrap bundle: %v\n", err)
+		os.Exit(1)
+	}
+	if err == nil {
+		wrapped = true
+	}
+	if wrapped && !*keepWrapped {
+		defer func() {
+			if err := hook.RestoreBundle(bundle); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to restore bundle: %v\n", err)
+			}
+		}()
+	}
+
+	cmdArgs := append(splitArgs(*runtimeArgs), "run", "-b", bundle, *id)
+	cmd := exec.Command(*runtime, cmdArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "failed to run runtime: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // reportCmd summarises collected hook logs.
@@ -183,8 +224,22 @@ func reportCmd(args []string) {
 		os.Exit(1)
 	}
 	traceDir := fs.Arg(0)
-	// TODO: call internal/report to summarise logs
-	fmt.Printf("report called on dir %s with format %s\n", traceDir, *format)
+	r, err := report.ParseDir(traceDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to parse traces: %v\n", err)
+		os.Exit(1)
+	}
+	switch *format {
+	case "text":
+		fmt.Print(r.FormatText())
+	case "json":
+		fmt.Print(r.FormatJSON())
+	case "yaml":
+		fmt.Print(r.FormatYAML())
+	default:
+		fmt.Fprintf(os.Stderr, "unknown report format: %s\n", *format)
+		os.Exit(1)
+	}
 }
 
 func printHooks(name string, hooks []spec.Hook) {
@@ -209,4 +264,11 @@ func printHooks(name string, hooks []spec.Hook) {
 			fmt.Printf("    timeout: %d\n", h.Timeout)
 		}
 	}
+}
+
+func splitArgs(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return strings.Fields(raw)
 }
