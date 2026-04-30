@@ -14,6 +14,7 @@ It also has filesystem-based helpers for locating containerd runtime v2 task bun
 * Wrap hooks to capture execution traces.
 * Report and diagnose hook failures with redaction enabled by default.
 * Locate containerd runtime v2 task bundles from namespace and container ID.
+* Trace OCI image annotations and labels to spot metadata propagation gaps.
 
 ## Install
 
@@ -50,6 +51,7 @@ catchy report bundle/.catchy/traces
 * `catchy check-containerd --namespace <ns> --id <id>`: check a containerd task bundle.
 * `catchy inspect-containerd --namespace <ns> --id <id>`: inspect a containerd task bundle.
 * `catchy diagnose-containerd --namespace <ns> --id <id>`: diagnose traces for a containerd task bundle.
+* `catchy trace-metadata <image>`: show image manifest annotations, config labels, and propagation notes.
 
 ## containerd helpers
 
@@ -60,6 +62,16 @@ sudo catchy bundle-path --namespace default --id test
 sudo catchy check-containerd --namespace default --id test
 sudo catchy inspect-containerd --namespace default --id test
 ```
+
+## Metadata tracing
+
+OCI images can store metadata in manifest annotations and config labels. Container runtimes often do not propagate manifest annotations; containerd typically uses config labels, not manifest annotations.
+
+```sh
+catchy trace-metadata harbor.example.com/test:latest
+```
+
+This is read-only and uses `crane`, `skopeo`, or `docker` when available.
 
 ## Demos
 

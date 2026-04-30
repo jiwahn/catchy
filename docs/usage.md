@@ -28,6 +28,7 @@ The containerd issue **"Make it POSSIBLE to debug cdi hooks"** complains that th
 * **Run** a bundle through a chosen OCI runtime (`runc`, `crun`, etc.) while collecting hook traces.
 * **Report** hook execution traces as text, JSON, or YAML.
 * **Locate** containerd runtime v2 task bundles by namespace and container ID.
+* **Trace** OCI image annotations and labels to understand metadata propagation gaps.
 * Designed as an external CLI; no need to patch the runtime.
 
 ## Before / After
@@ -93,6 +94,7 @@ catchy/
 ├── internal/
 │   ├── check/         # preflight validation for OCI hook definitions
 │   ├── containerd/    # filesystem-based containerd bundle discovery
+│   ├── metadata/      # read-only image metadata tracing
 │   ├── spec/          # loading and validating OCI config.json
 │   ├── hook/          # hook rewriting and wrapper generation
 │   └── report/        # reporting and trace summarisation
@@ -146,6 +148,7 @@ CATCHY_E2E_RUNTIME=1 CATCHY_E2E_RUNTIMES=runc go test ./test/e2e -v
 * `catchy check-containerd --namespace <ns> --id <container-id>` – check hooks in a containerd runtime v2 task bundle.
 * `catchy inspect-containerd --namespace <ns> --id <container-id>` – inspect hooks in a containerd runtime v2 task bundle.
 * `catchy diagnose-containerd --namespace <ns> --id <container-id>` – diagnose traces for a containerd runtime v2 task bundle.
+* `catchy trace-metadata <image>` – show image manifest annotations, config labels, and metadata propagation observations.
 
 The wrapper is implemented as a hidden `hook-wrapper` mode in the same binary, so the default `wrap` command can use the current executable as the hook wrapper. Trace files are written as JSON under `<bundle>/.catchy/traces` unless `--trace-dir` is provided. The trace schema is documented in [docs/trace-schema.md](docs/trace-schema.md).
 
@@ -185,6 +188,34 @@ sudo catchy inspect-containerd --namespace default --id test
 sudo catchy diagnose-containerd --namespace default --id test
 ```
 
+## Metadata Tracing
+
+OCI images can store metadata in multiple places. Manifest annotations live on the manifest, while config labels live in the image config. Container runtimes often do not propagate manifest annotations into runtime configuration; containerd typically uses config labels, not manifest annotations.
+
+`catchy trace-metadata <image>` is read-only. It uses `crane` first, then `skopeo`, then `docker` if available.
+
+```
+catchy trace-metadata harbor.example.com/test:latest
+catchy trace-metadata --format json harbor.example.com/test:latest
+```
+
+Example output:
+
+```
+image: harbor.example.com/test:latest
+
+manifest annotations:
+com.urunc.unikernel.binary=/unikernel/nginx
+
+config labels:
+nginx=nope
+
+observations:
+
+* both manifest annotations and config labels present
+  hint: verify which fields your runtime actually propagates (containerd typically uses config labels, not manifest annotations)
+```
+
 ## Diagnose
 
 `catchy diagnose <trace-dir>` helps answer which hook failed and what it reported. It treats non-zero exits, signals, timeouts, and wrapper execution errors as hook failures. It also provides simple pattern-based hints for common issues such as missing hook executables, permission denied errors, exec format errors, timeouts, and missing environment variables.
@@ -219,6 +250,7 @@ catchy run --redact-key session_id --runtime runc bundle
 * Redaction is best-effort and not a security boundary.
 * Docker, nerdctl, Kubernetes, and containerd API workflows are not directly integrated yet.
 * containerd helpers are filesystem-only and require the runtime v2 task bundle to still exist on disk.
+* Metadata tracing uses local CLI tools and does not inspect running containers or mutate images.
 * Legacy `--runtime-args` uses simple whitespace splitting; prefer repeatable `--runtime-arg`.
 
 ## Roadmap
@@ -226,6 +258,7 @@ catchy run --redact-key session_id --runtime runc bundle
 * Improve diagnose rules with runtime-specific and CDI-specific failure hints.
 * Improve runtime compatibility testing.
 * Consider containerd API integration for locating live task metadata.
+* Correlate image metadata with container and runtime spec metadata when containerd API support exists.
 
 ## Contributing
 

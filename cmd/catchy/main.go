@@ -15,6 +15,7 @@ import (
 	containerdbundle "github.com/jiwahn/catchy/internal/containerd"
 	"github.com/jiwahn/catchy/internal/diagnose"
 	"github.com/jiwahn/catchy/internal/hook"
+	"github.com/jiwahn/catchy/internal/metadata"
 	"github.com/jiwahn/catchy/internal/report"
 	"github.com/jiwahn/catchy/internal/spec"
 )
@@ -38,6 +39,7 @@ Commands:
     run                 Wrap hooks and run the container via an OCI runtime
     report              Summarise collected hook trace logs
     diagnose            Summarise hook failures from collected traces
+    trace-metadata      Trace OCI image annotations and labels
 
 Use "catchy <command> -h" for more information about a command.
 `)
@@ -72,6 +74,8 @@ func main() {
 		reportCmd(os.Args[2:])
 	case "diagnose":
 		diagnoseCmd(os.Args[2:])
+	case "trace-metadata":
+		traceMetadataCmd(os.Args[2:])
 	case "hook-wrapper":
 		os.Exit(hook.RunWrapper(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	case "version":
@@ -244,6 +248,37 @@ func diagnoseContainerdCmd(args []string) {
 		fmt.Print(result.FormatJSON())
 	default:
 		fmt.Fprintf(os.Stderr, "unknown diagnose-containerd format: %s\n", *format)
+		os.Exit(1)
+	}
+}
+
+// traceMetadataCmd traces OCI image annotations and labels.
+func traceMetadataCmd(args []string) {
+	fs := flag.NewFlagSet("trace-metadata", flag.ExitOnError)
+	format := fs.String("format", "text", "output format: text, json")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy trace-metadata [--format text] <image>\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	trace, err := metadata.TraceImage(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	switch *format {
+	case "text":
+		fmt.Print(trace.FormatText())
+	case "json":
+		fmt.Print(trace.FormatJSON())
+	default:
+		fmt.Fprintf(os.Stderr, "unknown trace-metadata format: %s\n", *format)
 		os.Exit(1)
 	}
 }
