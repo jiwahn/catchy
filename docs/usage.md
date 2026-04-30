@@ -27,6 +27,7 @@ The containerd issue **"Make it POSSIBLE to debug cdi hooks"** complains that th
 * **Wrap** existing hooks with a wrapper that captures stdout, stderr, exit status, duration, and OCI hook state.
 * **Run** a bundle through a chosen OCI runtime (`runc`, `crun`, etc.) while collecting hook traces.
 * **Report** hook execution traces as text, JSON, or YAML.
+* **Locate** containerd runtime v2 task bundles by namespace and container ID.
 * Designed as an external CLI; no need to patch the runtime.
 
 ## Before / After
@@ -91,6 +92,7 @@ catchy/
 │   └── catchy/     # CLI entry points (inspect, check, wrap, run, report)
 ├── internal/
 │   ├── check/         # preflight validation for OCI hook definitions
+│   ├── containerd/    # filesystem-based containerd bundle discovery
 │   ├── spec/          # loading and validating OCI config.json
 │   ├── hook/          # hook rewriting and wrapper generation
 │   └── report/        # reporting and trace summarisation
@@ -140,6 +142,10 @@ CATCHY_E2E_RUNTIME=1 CATCHY_E2E_RUNTIMES=runc go test ./test/e2e -v
 * `catchy run --runtime <runtime> <path/to/bundle>` – wrap hooks, execute `runtime run -b <bundle> <id>`, and restore the bundle afterward. Prefer repeatable `--runtime-arg ARG` for runtime options; legacy `--runtime-args "..."` is still accepted and uses simple whitespace splitting.
 * `catchy report <trace-dir>` – summarise collected hook traces as text, JSON, or YAML.
 * `catchy diagnose <trace-dir>` – print a concise failure-focused summary of hook traces as text or JSON.
+* `catchy bundle-path --namespace <ns> --id <container-id>` – print a containerd runtime v2 task bundle path.
+* `catchy check-containerd --namespace <ns> --id <container-id>` – check hooks in a containerd runtime v2 task bundle.
+* `catchy inspect-containerd --namespace <ns> --id <container-id>` – inspect hooks in a containerd runtime v2 task bundle.
+* `catchy diagnose-containerd --namespace <ns> --id <container-id>` – diagnose traces for a containerd runtime v2 task bundle.
 
 The wrapper is implemented as a hidden `hook-wrapper` mode in the same binary, so the default `wrap` command can use the current executable as the hook wrapper. Trace files are written as JSON under `<bundle>/.catchy/traces` unless `--trace-dir` is provided. The trace schema is documented in [docs/trace-schema.md](docs/trace-schema.md).
 
@@ -159,6 +165,25 @@ catchy check --format json bundle
 ```
 
 This is a preflight check for common hook setup mistakes, not a full OCI spec validator or security scanner.
+
+## containerd helpers
+
+The containerd helpers are filesystem-based. They look under:
+
+```
+/run/containerd/io.containerd.runtime.v2.task/<namespace>/<container-id>
+```
+
+They do not query the containerd API, list containers, or modify containerd state. The task bundle must still exist on disk; failed tasks may already have been cleaned up by containerd. Kubernetes commonly uses namespace `k8s.io`.
+
+Examples:
+
+```
+sudo catchy bundle-path --namespace default --id test
+sudo catchy check-containerd --namespace default --id test
+sudo catchy inspect-containerd --namespace default --id test
+sudo catchy diagnose-containerd --namespace default --id test
+```
 
 ## Diagnose
 
@@ -192,14 +217,15 @@ catchy run --redact-key session_id --runtime runc bundle
 * It rewrites `config.json` and restores it afterward.
 * Wrapper-based tracing may not be perfectly transparent for hooks that depend on exact `argv[0]`, environment, cwd, signal behavior, or timing.
 * Redaction is best-effort and not a security boundary.
-* Docker, nerdctl, Kubernetes, and containerd workflows are not directly integrated yet.
+* Docker, nerdctl, Kubernetes, and containerd API workflows are not directly integrated yet.
+* containerd helpers are filesystem-only and require the runtime v2 task bundle to still exist on disk.
 * Legacy `--runtime-args` uses simple whitespace splitting; prefer repeatable `--runtime-arg`.
 
 ## Roadmap
 
 * Improve diagnose rules with runtime-specific and CDI-specific failure hints.
 * Improve runtime compatibility testing.
-* Consider helpers for locating runtime bundles created by containerd.
+* Consider containerd API integration for locating live task metadata.
 
 ## Contributing
 

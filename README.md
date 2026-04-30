@@ -6,6 +6,15 @@ It works at the OCI bundle level: inspect hooks, preflight-check hook definition
 
 It is focused on runtime hooks. It is not a general container debugger.
 
+It also has filesystem-based helpers for locating containerd runtime v2 task bundles.
+
+## Features
+
+* Inspect and preflight-check OCI hook definitions.
+* Wrap hooks to capture execution traces.
+* Report and diagnose hook failures with redaction enabled by default.
+* Locate containerd runtime v2 task bundles from namespace and container ID.
+
 ## Install
 
 ```sh
@@ -37,6 +46,20 @@ catchy report bundle/.catchy/traces
 * `catchy run --runtime <runtime> <bundle>`: wrap, run, trace, and restore.
 * `catchy diagnose <trace-dir>`: show the failed hook, output, exit data, and hints.
 * `catchy report <trace-dir>`: print trace reports as text, JSON, or YAML.
+* `catchy bundle-path --namespace <ns> --id <id>`: print a containerd runtime v2 bundle path.
+* `catchy check-containerd --namespace <ns> --id <id>`: check a containerd task bundle.
+* `catchy inspect-containerd --namespace <ns> --id <id>`: inspect a containerd task bundle.
+* `catchy diagnose-containerd --namespace <ns> --id <id>`: diagnose traces for a containerd task bundle.
+
+## containerd helpers
+
+These helpers look under `/run/containerd/io.containerd.runtime.v2.task/<namespace>/<id>`. They do not query the containerd API, so the bundle must still exist on disk. Kubernetes usually uses namespace `k8s.io`.
+
+```sh
+sudo catchy bundle-path --namespace default --id test
+sudo catchy check-containerd --namespace default --id test
+sudo catchy inspect-containerd --namespace default --id test
+```
 
 ## Demos
 

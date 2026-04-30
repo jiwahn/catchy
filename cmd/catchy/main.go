@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/jiwahn/catchy/internal/check"
+	containerdbundle "github.com/jiwahn/catchy/internal/containerd"
 	"github.com/jiwahn/catchy/internal/diagnose"
 	"github.com/jiwahn/catchy/internal/hook"
 	"github.com/jiwahn/catchy/internal/report"
@@ -25,13 +27,17 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: catchy <command> [options]
 
 Commands:
-    inspect   Inspect an OCI bundle and list its hooks
-    check     Preflight validate OCI hook definitions
-    wrap      Rewrite hooks in a bundle to wrap them with a trace wrapper
-    restore   Restore config.json from config.json.catchy.bak
-    run       Wrap hooks and run the container via an OCI runtime
-    report    Summarise collected hook trace logs
-    diagnose  Summarise hook failures from collected traces
+    inspect             Inspect an OCI bundle and list its hooks
+    check               Preflight validate OCI hook definitions
+    bundle-path         Print a containerd runtime v2 bundle path
+    inspect-containerd  Inspect hooks for a containerd runtime v2 bundle
+    check-containerd    Check hooks for a containerd runtime v2 bundle
+    diagnose-containerd Diagnose traces for a containerd runtime v2 bundle
+    wrap                Rewrite hooks in a bundle to wrap them with a trace wrapper
+    restore             Restore config.json from config.json.catchy.bak
+    run                 Wrap hooks and run the container via an OCI runtime
+    report              Summarise collected hook trace logs
+    diagnose            Summarise hook failures from collected traces
 
 Use "catchy <command> -h" for more information about a command.
 `)
@@ -48,6 +54,14 @@ func main() {
 		inspectCmd(os.Args[2:])
 	case "check":
 		checkCmd(os.Args[2:])
+	case "bundle-path":
+		bundlePathCmd(os.Args[2:])
+	case "inspect-containerd":
+		inspectContainerdCmd(os.Args[2:])
+	case "check-containerd":
+		checkContainerdCmd(os.Args[2:])
+	case "diagnose-containerd":
+		diagnoseContainerdCmd(os.Args[2:])
 	case "wrap":
 		wrapCmd(os.Args[2:])
 	case "restore":
@@ -107,6 +121,133 @@ func checkCmd(args []string) {
 	}
 }
 
+// bundlePathCmd resolves a containerd runtime v2 bundle path.
+func bundlePathCmd(args []string) {
+	fs := flag.NewFlagSet("bundle-path", flag.ExitOnError)
+	namespace := fs.String("namespace", "default", "containerd namespace")
+	id := fs.String("id", "", "container id")
+	root := fs.String("root", containerdbundle.DefaultRuntimeV2Root(), "containerd runtime v2 task root")
+	format := fs.String("format", "text", "output format: text, json")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy bundle-path --namespace NS --id ID [--root DIR] [--format text]\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	info := findContainerdBundleOrExit(fs, *root, *namespace, *id)
+	switch *format {
+	case "text":
+		if !info.Exists {
+			printContainerdBundleMissing(info)
+			os.Exit(1)
+		}
+		fmt.Println(info.BundlePath)
+	case "json":
+		printJSON(info)
+		if !info.Exists {
+			os.Exit(1)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown bundle-path format: %s\n", *format)
+		os.Exit(1)
+	}
+}
+
+// checkContainerdCmd validates hooks from a containerd runtime v2 bundle.
+func checkContainerdCmd(args []string) {
+	fs := flag.NewFlagSet("check-containerd", flag.ExitOnError)
+	namespace := fs.String("namespace", "default", "containerd namespace")
+	id := fs.String("id", "", "container id")
+	root := fs.String("root", containerdbundle.DefaultRuntimeV2Root(), "containerd runtime v2 task root")
+	format := fs.String("format", "text", "output format: text, json")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy check-containerd --namespace NS --id ID [--root DIR] [--format text]\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	info := findExistingContainerdBundleOrExit(fs, *root, *namespace, *id)
+	result, err := check.CheckBundle(info.BundlePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to check bundle: %v\n", err)
+		os.Exit(1)
+	}
+	switch *format {
+	case "text":
+		fmt.Print(result.FormatText())
+	case "json":
+		fmt.Print(result.FormatJSON())
+	default:
+		fmt.Fprintf(os.Stderr, "unknown check-containerd format: %s\n", *format)
+		os.Exit(1)
+	}
+	if result.HasProblems() {
+		os.Exit(1)
+	}
+}
+
+// inspectContainerdCmd inspects hooks from a containerd runtime v2 bundle.
+func inspectContainerdCmd(args []string) {
+	fs := flag.NewFlagSet("inspect-containerd", flag.ExitOnError)
+	namespace := fs.String("namespace", "default", "containerd namespace")
+	id := fs.String("id", "", "container id")
+	root := fs.String("root", containerdbundle.DefaultRuntimeV2Root(), "containerd runtime v2 task root")
+	noRedact := fs.Bool("no-redact", false, "disable inspect output redaction")
+	var redactKeys stringListFlag
+	fs.Var(&redactKeys, "redact-key", "additional sensitive key pattern for inspect redaction; may be repeated")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy inspect-containerd --namespace NS --id ID [--root DIR] [--no-redact] [--redact-key KEY]\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	info := findExistingContainerdBundleOrExit(fs, *root, *namespace, *id)
+	redaction := hook.NewRedactionConfig(!*noRedact, redactKeys)
+	if err := inspectBundle(os.Stdout, info.BundlePath, redaction); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load bundle: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// diagnoseContainerdCmd diagnoses traces from a containerd runtime v2 bundle.
+func diagnoseContainerdCmd(args []string) {
+	fs := flag.NewFlagSet("diagnose-containerd", flag.ExitOnError)
+	namespace := fs.String("namespace", "default", "containerd namespace")
+	id := fs.String("id", "", "container id")
+	root := fs.String("root", containerdbundle.DefaultRuntimeV2Root(), "containerd runtime v2 task root")
+	traceDir := fs.String("trace-dir", "", "trace directory (default: <bundle>/.catchy/traces)")
+	format := fs.String("format", "text", "output format: text, json")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: catchy diagnose-containerd --namespace NS --id ID [--root DIR] [--trace-dir DIR] [--format text]\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	info := findExistingContainerdBundleOrExit(fs, *root, *namespace, *id)
+	dir := *traceDir
+	if dir == "" {
+		dir = filepath.Join(info.BundlePath, ".catchy", "traces")
+	}
+	result, err := diagnose.ParseDir(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to diagnose traces: %v\n", err)
+		os.Exit(1)
+	}
+	switch *format {
+	case "text":
+		fmt.Print(result.FormatText())
+	case "json":
+		fmt.Print(result.FormatJSON())
+	default:
+		fmt.Fprintf(os.Stderr, "unknown diagnose-containerd format: %s\n", *format)
+		os.Exit(1)
+	}
+}
+
 // inspectCmd parses flags and calls the inspect subcommand.
 func inspectCmd(args []string) {
 	fs := flag.NewFlagSet("inspect", flag.ExitOnError)
@@ -125,27 +266,11 @@ func inspectCmd(args []string) {
 		os.Exit(1)
 	}
 	bundle := fs.Arg(0)
-	cfgPath := filepath.Join(bundle, "config.json")
-
-	b, err := spec.LoadBundle(cfgPath)
-	if err != nil {
+	redaction := hook.NewRedactionConfig(!*noRedact, redactKeys)
+	if err := inspectBundle(os.Stdout, bundle, redaction); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load bundle: %v\n", err)
 		os.Exit(1)
 	}
-
-	if b.Hooks == nil {
-		fmt.Println("no hooks found")
-		return
-	}
-
-	redaction := hook.NewRedactionConfig(!*noRedact, redactKeys)
-	printHooks(os.Stdout, "prestart", b.Hooks.Prestart, redaction)
-	printHooks(os.Stdout, "createRuntime", b.Hooks.CreateRuntime, redaction)
-	printHooks(os.Stdout, "createContainer", b.Hooks.CreateContainer, redaction)
-	printHooks(os.Stdout, "startContainer", b.Hooks.StartContainer, redaction)
-	printHooks(os.Stdout, "poststart", b.Hooks.Poststart, redaction)
-	printHooks(os.Stdout, "poststop", b.Hooks.Poststop, redaction)
-
 }
 
 // wrapCmd rewrites hooks in the bundle.
@@ -344,6 +469,65 @@ func diagnoseCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "unknown diagnose format: %s\n", *format)
 		os.Exit(1)
 	}
+}
+
+func inspectBundle(w io.Writer, bundle string, redaction hook.RedactionConfig) error {
+	cfgPath := filepath.Join(bundle, "config.json")
+	b, err := spec.LoadBundle(cfgPath)
+	if err != nil {
+		return err
+	}
+	if b.Hooks == nil {
+		fmt.Fprintln(w, "no hooks found")
+		return nil
+	}
+	printHooks(w, "prestart", b.Hooks.Prestart, redaction)
+	printHooks(w, "createRuntime", b.Hooks.CreateRuntime, redaction)
+	printHooks(w, "createContainer", b.Hooks.CreateContainer, redaction)
+	printHooks(w, "startContainer", b.Hooks.StartContainer, redaction)
+	printHooks(w, "poststart", b.Hooks.Poststart, redaction)
+	printHooks(w, "poststop", b.Hooks.Poststop, redaction)
+	return nil
+}
+
+func findContainerdBundleOrExit(fs *flag.FlagSet, root, namespace, id string) *containerdbundle.BundleInfo {
+	if fs.NArg() != 0 || id == "" {
+		fs.Usage()
+		os.Exit(1)
+	}
+	info, err := containerdbundle.FindBundle(containerdbundle.BundleLookupOptions{
+		Root:      root,
+		Namespace: namespace,
+		ID:        id,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to resolve containerd bundle: %v\n", err)
+		os.Exit(1)
+	}
+	return info
+}
+
+func findExistingContainerdBundleOrExit(fs *flag.FlagSet, root, namespace, id string) *containerdbundle.BundleInfo {
+	info := findContainerdBundleOrExit(fs, root, namespace, id)
+	if !info.Exists {
+		printContainerdBundleMissing(info)
+		os.Exit(1)
+	}
+	return info
+}
+
+func printContainerdBundleMissing(info *containerdbundle.BundleInfo) {
+	fmt.Fprintf(os.Stderr, "containerd bundle not found: %s\n", info.ConfigPath)
+	fmt.Fprintln(os.Stderr, "hint: verify the namespace and container id, and check whether the task bundle still exists")
+}
+
+func printJSON(v any) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode json: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(data))
 }
 
 func printHooks(w io.Writer, name string, hooks []spec.Hook, redaction hook.RedactionConfig) {
