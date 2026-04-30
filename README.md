@@ -83,6 +83,8 @@ media type: application/vnd.oci.image.index.v1+json
 
 If the image resolves to an index or manifest list, top-level annotations may be index-level metadata; platform-specific manifest annotations may need platform selection in a future version.
 
+For background on annotations, labels, and runtime spec propagation, see [docs/metadata-flow.md](docs/metadata-flow.md).
+
 ## Demos
 
 ```sh
@@ -96,6 +98,7 @@ make demo-cdi-like-hook
 ## Docs
 
 * [Usage and motivation](docs/usage.md)
+* [OCI metadata flow](docs/metadata-flow.md)
 * [Trace schema](docs/trace-schema.md)
 * [Contributing](CONTRIBUTING.md)
 
