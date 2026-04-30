@@ -192,7 +192,9 @@ sudo catchy diagnose-containerd --namespace default --id test
 
 OCI images can store metadata in multiple places. Manifest annotations live on the manifest, while config labels live in the image config. Container runtimes often do not propagate manifest annotations into runtime configuration; containerd typically uses config labels, not manifest annotations.
 
-`catchy trace-metadata <image>` is read-only. It uses `crane` first, then `skopeo`, then `docker` if available.
+`catchy trace-metadata <image>` is read-only. It uses `crane` first, then `skopeo`, then `docker` if available. Docker fallback usually exposes local image config labels only and usually cannot show remote manifest annotations.
+
+If the image reference resolves to an OCI image index or Docker manifest list, top-level annotations may be index-level metadata. Platform-specific manifest annotations may require selecting a platform in a future version.
 
 ```
 catchy trace-metadata harbor.example.com/test:latest
@@ -203,17 +205,19 @@ Example output:
 
 ```
 image: harbor.example.com/test:latest
+source: crane
+media type: application/vnd.oci.image.manifest.v1+json
 
 manifest annotations:
-com.urunc.unikernel.binary=/unikernel/nginx
+  com.urunc.unikernel.binary=/unikernel/nginx
 
 config labels:
-nginx=nope
+  nginx=nope
 
 observations:
 
-* both manifest annotations and config labels present
-  hint: verify which fields your runtime actually propagates (containerd typically uses config labels, not manifest annotations)
+  - both manifest annotations and config labels present
+    hint: verify which fields your runtime actually propagates (containerd typically uses config labels, not manifest annotations)
 ```
 
 ## Diagnose

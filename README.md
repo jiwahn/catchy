@@ -71,7 +71,17 @@ OCI images can store metadata in manifest annotations and config labels. Contain
 catchy trace-metadata harbor.example.com/test:latest
 ```
 
-This is read-only and uses `crane`, `skopeo`, or `docker` when available.
+The command is read-only. It uses `crane`, then `skopeo`, then `docker`. Docker fallback usually shows local image config labels only and usually cannot show remote manifest annotations.
+
+Example output includes the source tool and manifest media type:
+
+```text
+image: harbor.example.com/test:latest
+source: crane
+media type: application/vnd.oci.image.index.v1+json
+```
+
+If the image resolves to an index or manifest list, top-level annotations may be index-level metadata; platform-specific manifest annotations may need platform selection in a future version.
 
 ## Demos
 
